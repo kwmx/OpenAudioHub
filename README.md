@@ -97,11 +97,36 @@ tree is never copied or modified.
 
 ## First-run setup
 
-1. Open **http://openaudiohub.local/** (or `http://<hub-ip>/`) and sign in.
-2. **Devices → Start pairing**, then pair from your phone or computer.
-3. Assign roles: **Input 1**, **Input 2** and **Output 1**.
-4. On the **Dashboard**, confirm the signal path shows *Connected* for each slot
-   and set the mixer levels.
+Open **http://openaudiohub.local/** (or `http://<hub-ip>/`) and sign in.
+
+Adding a **source** and adding an **output** run the Bluetooth pairing in
+opposite directions, which is why the Devices screen gives you both **Start
+pairing** and **Scan**.
+
+### Add a source: phone, computer, tablet
+
+The source connects to the hub from its own side, so the hub has to be
+advertised as discoverable first.
+
+1. **Devices → Start pairing.** The hub becomes discoverable for a short window,
+   with the remaining time shown on the button.
+2. On the phone or computer, open Bluetooth settings and select the hub
+   (`OpenAudioHub` by default).
+3. Assign the device to **Input 1** or **Input 2**.
+
+### Add an output: headset, speaker
+
+Here the hub is the side that connects, so you discover the device instead of
+advertising the hub.
+
+1. Put the headset or speaker into pairing mode.
+2. **Devices → Scan.** The device appears in the list as it is discovered.
+3. Press **Pair** on its card, then assign it to **Output 1**.
+
+### Finish
+
+On the **Dashboard**, confirm the signal path shows *Connected* for every slot you
+filled, then set the mixer levels.
 
 ## The web interface
 
@@ -191,6 +216,8 @@ pgrep -af 'bluealsa|bluealsa-aplay'
 | Symptom | Likely cause |
 |---|---|
 | A third source will not connect | Only two A2DP sink endpoints exist. Disconnect an unassigned source first. |
+| A phone or computer cannot find the hub | Pairing mode has already expired. Press **Start pairing** again and retry from the device's Bluetooth settings. |
+| A headset or speaker never appears | It must be put into pairing mode first, then press **Scan**. |
 | Health strip reports "No output" | Assign and connect **Output 1** under Devices. |
 | Audio controls show "recovering" | The PipeWire control socket is restarting; the daemon heals it automatically. |
 | Wi-Fi sits on 2.4 GHz | It will compete with Bluetooth audio. Prefer 5 GHz. |
