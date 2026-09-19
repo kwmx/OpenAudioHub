@@ -2,8 +2,16 @@
 """OpenAudioHub BlueZ pairing agent.
 
 Runs continuously so headless pairing works without an interactive bluetoothctl.
-New-device authorization is accepted only while the web UI has enabled pairing mode.
-Already paired/trusted devices are always allowed to authorize services/reconnect.
+
+This agent governs the direction where the *remote* device initiates. A phone or
+computer connecting to the hub needs pairing mode enabled (the flag file below);
+already paired/trusted devices are always allowed to authorize services and
+reconnect, so reconnects never depend on pairing mode.
+
+The opposite direction is deliberately not gated here: adding a headset or speaker
+from the web UI discovers the device with Scan and pairs it through the daemon's
+own bluetoothctl invocation, so it works with pairing mode off. That is confirmed
+behaviour, not an oversight - do not add a pairing-mode check for it.
 """
 import os
 import dbus

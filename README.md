@@ -99,9 +99,9 @@ tree is never copied or modified.
 
 Open **http://openaudiohub.local/** (or `http://<hub-ip>/`) and sign in.
 
-Adding a **source** and adding an **output** run the Bluetooth pairing in
-opposite directions, which is why the Devices screen gives you both **Start
-pairing** and **Scan**.
+Adding a **source** and adding an **output** run Bluetooth pairing in opposite
+directions, which is why the Devices screen offers both **Start pairing** and
+**Scan**. Only sources need pairing mode — outputs are added by scanning.
 
 ### Add a source: phone, computer, tablet
 
@@ -116,10 +116,10 @@ advertised as discoverable first.
 
 ### Add an output: headset, speaker
 
-Here the hub is the side that connects, so you discover the device instead of
-advertising the hub.
+The hub is the side that connects here, so you discover the device instead of
+advertising the hub. **Pairing mode is not needed** — leave it off.
 
-1. Put the headset or speaker into pairing mode.
+1. Put the headset or speaker into *its own* pairing mode.
 2. **Devices → Scan.** The device appears in the list as it is discovered.
 3. Press **Pair** on its card, then assign it to **Output 1**.
 
@@ -217,7 +217,7 @@ pgrep -af 'bluealsa|bluealsa-aplay'
 |---|---|
 | A third source will not connect | Only two A2DP sink endpoints exist. Disconnect an unassigned source first. |
 | A phone or computer cannot find the hub | Pairing mode has already expired. Press **Start pairing** again and retry from the device's Bluetooth settings. |
-| A headset or speaker never appears | It must be put into pairing mode first, then press **Scan**. |
+| A headset or speaker never appears | Put the headset or speaker into *its own* pairing mode first, then press **Scan**. The hub's pairing mode is unrelated. |
 | Health strip reports "No output" | Assign and connect **Output 1** under Devices. |
 | Audio controls show "recovering" | The PipeWire control socket is restarting; the daemon heals it automatically. |
 | Wi-Fi sits on 2.4 GHz | It will compete with Bluetooth audio. Prefer 5 GHz. |
