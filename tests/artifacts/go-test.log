@@ -1,0 +1,58 @@
+?   	github.com/openaudiohub/openaudiohub/cmd/openaudiohubd	[no test files]
+=== RUN   TestPasswordHash
+--- PASS: TestPasswordHash (1.19s)
+=== RUN   TestBluetoothPathAddress
+--- PASS: TestBluetoothPathAddress (0.00s)
+=== RUN   TestWiFiBandChannel
+--- PASS: TestWiFiBandChannel (0.00s)
+=== RUN   TestConfigUpdateIsAtomicOnError
+--- PASS: TestConfigUpdateIsAtomicOnError (0.00s)
+=== RUN   TestClearStaleBluetoothRoleWithoutDevice
+--- PASS: TestClearStaleBluetoothRoleWithoutDevice (0.00s)
+=== RUN   TestHTTPPanicIsSanitized
+2026/09/19 13:44:31 13:44:31 panic[75ebd369ea] GET /api/test: secret internal detail
+2026/09/19 13:44:31 OpenAudioHub panic[75ebd369ea]: secret internal detail
+goroutine 22 [running]:
+runtime/debug.Stack()
+	/usr/local/go/src/runtime/debug/stack.go:26 +0x5e
+github.com/openaudiohub/openaudiohub/internal/oah.TestHTTPPanicIsSanitized.(*App).recoverHTTP.func2.1()
+	/mnt/data/openaudiohub-recovery/OpenAudioHub/internal/oah/app.go:221 +0x157
+panic({0x61e080?, 0x6d99f0?})
+	/usr/local/go/src/runtime/panic.go:785 +0x132
+github.com/openaudiohub/openaudiohub/internal/oah.TestHTTPPanicIsSanitized.func1({0x40?, 0xc000052e08?}, 0x7f8cf1fa75b8?)
+	/mnt/data/openaudiohub-recovery/OpenAudioHub/internal/oah/oah_test.go:95 +0x25
+net/http.HandlerFunc.ServeHTTP(0xc000039ad0?, {0x6dc920?, 0xc00007cd80?}, 0x0?)
+	/usr/local/go/src/net/http/server.go:2220 +0x29
+github.com/openaudiohub/openaudiohub/internal/oah.TestHTTPPanicIsSanitized.(*App).recoverHTTP.func2({0x6dc920?, 0xc00007cd80?}, 0x66dfa9?)
+	/mnt/data/openaudiohub-recovery/OpenAudioHub/internal/oah/app.go:227 +0x75
+net/http.HandlerFunc.ServeHTTP(...)
+	/usr/local/go/src/net/http/server.go:2220
+github.com/openaudiohub/openaudiohub/internal/oah.TestHTTPPanicIsSanitized(0xc000125520)
+	/mnt/data/openaudiohub-recovery/OpenAudioHub/internal/oah/oah_test.go:98 +0x13f
+testing.tRunner(0xc000125520, 0x69a2a8)
+	/usr/local/go/src/testing/testing.go:1690 +0xf4
+created by testing.(*T).Run in goroutine 1
+	/usr/local/go/src/testing/testing.go:1743 +0x390
+--- PASS: TestHTTPPanicIsSanitized (0.00s)
+=== RUN   TestBluetoothNameResolutionRejectsMACAliases
+--- PASS: TestBluetoothNameResolutionRejectsMACAliases (0.00s)
+=== RUN   TestDeviceNameCachePersistsDiscoveryName
+--- PASS: TestDeviceNameCachePersistsDiscoveryName (0.00s)
+=== RUN   TestSignedSessionSurvivesDaemonRestartAndPasswordChange
+--- PASS: TestSignedSessionSurvivesDaemonRestartAndPasswordChange (0.77s)
+=== RUN   TestDefaultAudioBridgeTimingIsFrameAligned
+--- PASS: TestDefaultAudioBridgeTimingIsFrameAligned (0.00s)
+=== RUN   TestParseBluetoothDeviceLinesKeepsDiscoveryName
+--- PASS: TestParseBluetoothDeviceLinesKeepsDiscoveryName (0.00s)
+=== RUN   TestConfigCloneDoesNotAliasDevicePrefs
+--- PASS: TestConfigCloneDoesNotAliasDevicePrefs (0.00s)
+=== RUN   TestFindSinkInputSeparatesDirectAndBlueALSAPaths
+--- PASS: TestFindSinkInputSeparatesDirectAndBlueALSAPaths (0.00s)
+=== RUN   TestReceiverOptionsBounds
+--- PASS: TestReceiverOptionsBounds (0.00s)
+=== RUN   TestPublicAudioProjectionDoesNotExposeSecrets
+--- PASS: TestPublicAudioProjectionDoesNotExposeSecrets (0.00s)
+=== RUN   TestRevisionAndCachedStateDoNotRegressSettings
+--- PASS: TestRevisionAndCachedStateDoNotRegressSettings (0.00s)
+PASS
+ok  	github.com/openaudiohub/openaudiohub/internal/oah	1.996s

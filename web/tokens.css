@@ -1,0 +1,86 @@
+/* OpenAudioHub design tokens — the only stylesheet the SPA needs besides component CSS. */
+:root {
+  color-scheme: dark;
+
+  /* Surfaces (warm charcoal → graphite, tonal steps not hue shifts) */
+  --bg: #11110f;
+  --bg-sunken: #151513;      /* strips, inputs, log panes */
+  --surface: #191917;        /* cards */
+  --raised: #20201d;         /* secondary buttons, active nav, dialogs */
+  --border: #302f2b;         /* card hairlines and control borders */
+  --divider: #24231f;        /* row dividers inside cards */
+  --track: #3b3a35;          /* off toggles, empty signal bars */
+
+  /* Text */
+  --text: #f1efe9;
+  --text-secondary: #cfcac0; /* labels, button text on raised */
+  --text-muted: #a09c93;     /* meta, section labels */
+  --text-disabled: #66635e;  /* placeholders, idle dots, future features */
+
+  /* Accent — selection and active controls only */
+  --accent: #c69a5b;
+  --accent-hover: #d4aa6a;
+  --accent-tint: rgba(198, 154, 91, .14);
+  --on-accent: #11110f;
+
+  /* Signal path */
+  --path-active: #d6d2c9;    /* solid, 2px */
+  --path-idle: #302f2b;      /* dashed 4 4, 2px */
+  --path-marker: var(--accent); /* 2.5px dot at the mixer junction */
+
+  /* State — dots and text only, never fills */
+  --state-connected: #7fa68c;
+  --state-connecting: #8497ad;
+  --state-warning: #c39b5d;
+  --state-warning-tint: rgba(195, 155, 93, .10);
+  --state-warning-border: rgba(195, 155, 93, .45);
+  --state-error: #b96d68;
+  --state-error-tint: rgba(185, 109, 104, .10);
+  --state-error-border: rgba(185, 109, 104, .6);
+  --state-connected-tint: rgba(127, 166, 140, .08);
+  --state-connected-border: rgba(127, 166, 140, .4);
+  --state-connecting-tint: rgba(132, 151, 173, .10);
+  --state-connecting-border: rgba(132, 151, 173, .4);
+
+  /* Type — system stack, no remote fonts */
+  --font: system-ui, -apple-system, "Segoe UI", Helvetica, sans-serif;
+  --font-mono: ui-monospace, Menlo, monospace;
+  --text-xs: 11px;  /* section labels (uppercase, letter-spacing .04em), hints */
+  --text-sm: 12px;  /* meta, buttons */
+  --text-md: 13px;  /* body */
+  --text-lg: 16px;  /* card titles */
+  --text-xl: 20px;  /* page titles */
+  --leading: 1.5;
+
+  /* Space */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* Shape */
+  --radius-sm: 6px;   /* small buttons, chips */
+  --radius-md: 8px;   /* buttons, inputs */
+  --radius-lg: 12px;  /* cards */
+  --radius-xl: 14px;  /* dialogs */
+  --radius-pill: 999px;
+
+  /* Controls */
+  --control-h: 36px;
+  --touch-target: 44px;
+  --toggle-w: 28px;
+  --toggle-h: 16px;
+  --slider-h: 4px;
+
+  /* Motion — keep it to state transitions */
+  --motion-fast: 150ms ease;     /* toggles, hover */
+  --motion-meter: 200ms linear;  /* meter width */
+
+  /* Layout */
+  --bp-desktop: 760px;           /* switch from bottom tabs + stacked cards to top nav + rail */
+  --content-max: 1280px;
+  --rail-columns: minmax(0, 1fr) 48px minmax(300px, 1.2fr) 48px minmax(0, 1fr);
+  --shadow-overlay: 0 8px 24px rgba(0, 0, 0, .4);
+}

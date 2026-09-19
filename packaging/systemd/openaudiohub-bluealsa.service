@@ -1,0 +1,25 @@
+[Unit]
+Description=OpenAudioHub secondary A2DP sink endpoint
+After=bluetooth.service dbus.service
+Requires=bluetooth.service
+PartOf=bluetooth.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# Match the stable hand-tested prototype. PipeWire itself receives realtime
+# scheduling through RTKit; forcing a separate BlueALSA RT priority here added
+# another scheduling variable without evidence that it helped.
+ExecStart=/usr/local/lib/openaudiohub/bluealsa-daemon.sh
+Restart=on-failure
+RestartPreventExitStatus=73 78
+TimeoutStartSec=10
+TimeoutStopSec=5
+RestartSec=5
+MemoryHigh=64M
+MemoryMax=128M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

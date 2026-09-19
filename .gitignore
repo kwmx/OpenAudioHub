@@ -1,0 +1,17 @@
+/build/
+*.zip
+
+# Local-only design prototypes and scratch uploads
+/docs/design/
+
+# macOS Finder metadata (never publish)
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+
+web/node_modules/
+
+# Python bytecode
+__pycache__/
+*.py[cod]

@@ -1,0 +1,26 @@
+[Unit]
+Description=OpenAudioHub persistent BlueALSA to PipeWire bridge
+After=openaudiohub-bluealsa.service user@__AUDIO_UID__.service
+Requires=openaudiohub-bluealsa.service
+PartOf=openaudiohub-bluealsa.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=__AUDIO_USER__
+Environment=XDG_RUNTIME_DIR=/run/user/__AUDIO_UID__
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/__AUDIO_UID__/bus
+Environment=PULSE_SERVER=unix:/run/user/__AUDIO_UID__/pulse/native
+Environment=HOME=__AUDIO_HOME__
+ExecStart=/usr/local/lib/openaudiohub/bluealsa-bridge.sh
+Restart=on-failure
+RestartPreventExitStatus=73 78
+RestartSec=5
+MemoryHigh=64M
+MemoryMax=128M
+TasksMax=32
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

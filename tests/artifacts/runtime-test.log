@@ -1,0 +1,11 @@
+test_defaults (__main__.RuntimeTests.test_defaults) ... ok
+test_invalid_values_and_types (__main__.RuntimeTests.test_invalid_values_and_types) ... ok
+test_legacy_user_service_is_retired (__main__.RuntimeTests.test_legacy_user_service_is_retired) ... ok
+test_patch_changes_sink_not_shared_maximum (__main__.RuntimeTests.test_patch_changes_sink_not_shared_maximum) ... ok
+test_secret_not_read_by_player (__main__.RuntimeTests.test_secret_not_read_by_player) ... ok
+test_unprivileged_reader_can_read_public_not_private (__main__.RuntimeTests.test_unprivileged_reader_can_read_public_not_private) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 19.931s
+
+OK

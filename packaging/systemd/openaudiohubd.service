@@ -1,0 +1,30 @@
+[Unit]
+Description=OpenAudioHub control plane and web UI
+After=dbus.service
+Wants=bluetooth.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/openaudiohubd --config /etc/openaudiohub/config.json
+Environment=OPENAUDIOHUB_WEB=/usr/share/openaudiohub/web
+RuntimeDirectory=openaudiohub
+RuntimeDirectoryMode=0755
+Restart=always
+RestartSec=2
+TimeoutStartSec=15s
+TimeoutStopSec=10s
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/etc/openaudiohub /etc/netplan /etc/bluetooth /etc/hostname /var/lib/openaudiohub /run/openaudiohub
+ProtectHome=read-only
+# The control plane must never be able to exhaust a 1 GB appliance if BlueZ
+# returns pathological discovery state or a client hammers the API.
+MemoryHigh=96M
+MemoryMax=160M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

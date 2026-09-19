@@ -1,0 +1,12 @@
+test_dropdown_native_node_and_audio_draft_survive_updates (__main__.BrowserRegression.test_dropdown_native_node_and_audio_draft_survive_updates) ... ok
+test_failed_save_keeps_draft_and_retry (__main__.BrowserRegression.test_failed_save_keeps_draft_and_retry) ... ok
+test_identity_edit_survives_telemetry_and_selection (__main__.BrowserRegression.test_identity_edit_survives_telemetry_and_selection) ... ok
+test_pending_bluetooth_volume_is_not_mixer_gain (__main__.BrowserRegression.test_pending_bluetooth_volume_is_not_mixer_gain) ... ok
+test_rapid_saves_and_old_revision_cannot_reset_slider (__main__.BrowserRegression.test_rapid_saves_and_old_revision_cannot_reset_slider) ... ok
+test_real_slider_drag_survives_telemetry (__main__.BrowserRegression.test_real_slider_drag_survives_telemetry) ... ok
+test_receiver_details_and_mobile_layout (__main__.BrowserRegression.test_receiver_details_and_mobile_layout) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 10.497s
+
+OK

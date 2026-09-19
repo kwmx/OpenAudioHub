@@ -1,0 +1,14 @@
+[Unit]
+Description=Apply OpenAudioHub PipeWire/WirePlumber tuning
+After=user@__AUDIO_UID__.service bluetooth.service
+Wants=user@__AUDIO_UID__.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/openaudiohub/apply-audio.sh
+RemainAfterExit=yes
+TimeoutStartSec=25s
+TimeoutStopSec=8s
+
+[Install]
+WantedBy=multi-user.target
