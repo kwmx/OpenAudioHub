@@ -56,7 +56,7 @@ function normalizeState(raw={}) {
   const mutes = asArray(mixer.mutes).slice(0,2).map(Boolean); while(mutes.length<2) mutes.push(false);
   const placement = asArray(mixer.placement).slice(0,2).map(v=>['stereo','left','right'].includes(v)?v:'stereo'); while(placement.length<2) placement.push('stereo');
   const devices = asArray(x.devices).map((v, index)=>{const d=asObject(v); return {
-    ...d, sbcMaxBitpool:finite(d.sbcMaxBitpool), id:String(d.id||`device-${index}`), addr:String(d.addr||''), name:String(d.name||'Unnamed Bluetooth device'), kind:String(d.kind||'unknown'),
+    ...d, reason:String(d.reason||''), sbcMaxBitpool:finite(d.sbcMaxBitpool), id:String(d.id||`device-${index}`), addr:String(d.addr||''), name:String(d.name||'Unnamed Bluetooth device'), kind:String(d.kind||'unknown'),
     caps:asArray(d.caps).map(String), paired:Boolean(d.paired), trusted:Boolean(d.trusted), connected:Boolean(d.connected), status:String(d.status||'disconnected'), role:String(d.role||''),
     autoConnect:Boolean(d.autoConnect), backend:String(d.backend||''), rssi:finite(d.rssi), rate:finite(d.rate), volume:finite(d.volume,100), volumeKnown:Boolean(d.volumeKnown), latencyMs:finite(d.latencyMs), codec:String(d.codec||'')
   }});
@@ -224,6 +224,7 @@ function nodeCard(label,d,index,m,output=false){
     <small class="node-volume-label">Bluetooth volume</small>
     <div class="node-level"><span class="speaker-glyph">${SVG.speaker}</span><input data-bt-volume="${attr(d.addr)}" type="range" min="0" max="100" step="1" value="${btVolume}" ${btControl?'':'disabled'}><output data-bt-volume-output="${attr(d.addr)}">${d.volumeKnown?`${btVolume}%`:'—'}</output></div>
     <button class="btn node-mute ${btMuted?'primary':''}" data-bt-mute="${attr(d.addr)}" ${btControl?'':'disabled'}>${btMuted?'Unmute':'Mute'}</button>
+    ${d.reason?`<p class="node-reason">${esc(d.reason)}</p>`:''}
     <div class="node-actions">${assignedAction(d)}${autoToggle(d)}</div>
     ${!output?`<details class="receiver-details"><summary>Receiver settings · ${esc(d.backend||'not connected')}</summary>${d.backend==='bluealsa'?`<label>SBC maximum (reconnects this receiver)<select data-secondary-cap="${attr(d.addr)}">${[35,53,64,250].map(n=>`<option value="${n}" ${model.state.audio.secondarySbcMaxBitpool===n?'selected':''}>${n}${n===35?' · Compatibility':''}</option>`).join('')}</select></label><small>Negotiated maximum: ${d.sbcMaxBitpool||'unknown'}. This cap belongs to the BlueALSA receiver, not an independent cap on both inputs.</small>`:'<small>PipeWire receiver. Configurable SBC cap is available on the secondary BlueALSA receiver only.</small>'}</details>`:''}`,'node-card',`${output?'output':'input'}-${index}`);
 }

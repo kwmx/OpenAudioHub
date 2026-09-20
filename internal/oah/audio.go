@@ -286,8 +286,23 @@ func (a *App) reconcileRoutes(reason string) {
 
 	// Keep every assigned output connected and audible. Only initiate a connection
 	// when Auto is enabled; manual Connect bypasses this policy.
+	// The engine registers a single A2DP Source endpoint, so only one Bluetooth
+	// output can hold it at a time. Attempting a second produces
+	// "Unable to select SEP" from BlueZ and a connection that never settles, so skip
+	// it and let the state explain why instead of retrying forever.
+	sourceHolder := ""
 	for _, addr := range outputOrder {
 		if outputMedia[addr] {
+			sourceHolder = addr
+			break
+		}
+	}
+	for _, addr := range outputOrder {
+		if outputMedia[addr] {
+			continue
+		}
+		if sourceHolder != "" {
+			a.logf("output %s waiting: %s already holds the single A2DP source endpoint", addr, sourceHolder)
 			continue
 		}
 		if !a.autoConnectFor(addr) {

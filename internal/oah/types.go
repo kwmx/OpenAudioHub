@@ -82,6 +82,9 @@ type Device struct {
 	Muted         bool     `json:"muted,omitempty"`
 	LatencyMS     int      `json:"latencyMs,omitempty"`
 	Backend       string   `json:"backend,omitempty"`
+	// Reason explains a status the user cannot act on otherwise, such as another
+	// output already holding the single A2DP source endpoint.
+	Reason string `json:"reason,omitempty"`
 }
 
 type WiFiNetwork struct {

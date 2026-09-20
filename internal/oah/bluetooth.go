@@ -154,8 +154,22 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		case strings.HasPrefix(devices[i].Role, "out"):
 			devices[i].Connected = outputTransport[addr]
 		}
+		// Only one Bluetooth output can hold the engine's single A2DP Source
+		// endpoint. Say so plainly for the other assigned output rather than
+		// showing "Connecting..." forever.
+		if strings.HasPrefix(devices[i].Role, "out") && !devices[i].Connected {
+			for _, other := range devices {
+				if other.Addr != devices[i].Addr && strings.HasPrefix(other.Role, "out") && outputTransport[strings.ToUpper(other.Addr)] {
+					devices[i].Reason = "Another output is active. Only one Bluetooth output can play at a time — disconnect it to use this one."
+					devices[i].Status = "blocked"
+					break
+				}
+			}
+		}
 		if devices[i].Connected {
 			devices[i].Status = "connected"
+		} else if devices[i].Status == "blocked" {
+			// keep the explicit reason
 		} else if aclConnected && devices[i].Role != "" {
 			devices[i].Status = "connecting"
 		} else if devices[i].Role != "" {
