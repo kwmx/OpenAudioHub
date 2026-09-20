@@ -1,3 +1,18 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="web/assets/logo-wordmark-light.svg">
+    <img alt="OpenAudioHub" src="web/assets/logo-wordmark-dark.svg" width="440">
+  </picture>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-c69a5b"></a>
+  <img alt="Version 1.0.1" src="https://img.shields.io/badge/version-1.0.1-c69a5b">
+  <img alt="Go 1.23 or later" src="https://img.shields.io/badge/Go-1.23%2B-c69a5b">
+  <img alt="Platform: Linux arm64 and amd64" src="https://img.shields.io/badge/platform-linux%20arm64%20%7C%20amd64-c69a5b">
+  <img alt="Debian trixie or Armbian" src="https://img.shields.io/badge/OS-Debian%20trixie%20%7C%20Armbian-c69a5b">
+</p>
+
 # OpenAudioHub
 
 A headless Bluetooth audio mixer and control panel for small single-board
@@ -6,7 +21,7 @@ gain and ear placement, and send the result to **one** Bluetooth headset or
 speaker, all controlled from a local web page, with no cloud dependency.
 
 Reference target: **Orange Pi Zero 2W** running Armbian / Debian Trixie.
-Current version: **1.0.0**. See [Status](#status) for what is verified on hardware.
+Current version: **1.0.1**. See [Status](#status) for what is verified on hardware.
 
 ## What it does
 
@@ -22,6 +37,8 @@ Current version: **1.0.0**. See [Status](#status) for what is verified on hardwa
 - Single shared password; the whole interface is served from the device itself.
 
 ## How the audio path works
+
+![Signal path: two Bluetooth sources into one mixer, one Bluetooth output](docs/signal-path.svg)
 
 Two independent A2DP sink endpoints are registered so that two sources can be
 connected at the same time:

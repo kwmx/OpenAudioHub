@@ -67,7 +67,7 @@ func (a *App) diagnostics() Diagnostics {
 	// underrun from an AVDTP/SEP negotiation failure without polling journals in
 	// the normal dashboard path.
 	if out, err := a.run.Run(4*time.Second, "journalctl", "-b", "--no-pager", "-n", "80",
-		"-u", "openaudiohubd.service", "-u", "openaudiohub-bluealsa.service",
+		"-u", "openaudiohubd.service", "-u", "openaudiohub-update.service", "-u", "openaudiohub-bluealsa.service",
 		"-u", "openaudiohub-bluealsa-bridge.service", "-u", "bluetooth.service"); err == nil {
 		d.Logs = append(d.Logs, "--- recent service journal ---")
 		d.Logs = append(d.Logs, strings.Split(strings.TrimSpace(out), "\n")...)

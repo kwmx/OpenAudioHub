@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 360" width="920" height="360" role="img" aria-label="Signal path: two Bluetooth sources feed one mixer, which feeds one Bluetooth output">
+  <rect x="0.5" y="0.5" width="919" height="359" rx="14" fill="#11110f" stroke="#302f2b"/>
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, sans-serif">
+    <text x="46" y="52" fill="#a09c93" font-size="13" letter-spacing="1.6">BLUETOOTH SOURCES</text>
+    <text x="410" y="52" fill="#a09c93" font-size="13" letter-spacing="1.6">CONTROL</text>
+    <text x="700" y="52" fill="#a09c93" font-size="13" letter-spacing="1.6">BLUETOOTH OUTPUT</text>
+
+    <!-- Input 1 -->
+    <rect x="40" y="78" width="300" height="86" rx="12" fill="#191917" stroke="#302f2b"/>
+    <circle cx="66" cy="104" r="4" fill="#7fa68c"/>
+    <text x="82" y="109" fill="#cfcac0" font-size="15" font-weight="600">Input 1</text>
+    <text x="60" y="134" fill="#a09c93" font-size="13">BlueZ to PipeWire A2DP sink</text>
+    <text x="60" y="153" fill="#a09c93" font-size="12">first SEP</text>
+
+    <!-- Input 2 -->
+    <rect x="40" y="196" width="300" height="86" rx="12" fill="#191917" stroke="#302f2b"/>
+    <circle cx="66" cy="222" r="4" fill="#7fa68c"/>
+    <text x="82" y="227" fill="#cfcac0" font-size="15" font-weight="600">Input 2</text>
+    <text x="60" y="252" fill="#a09c93" font-size="13">BlueZ to BlueALSA A2DP sink</text>
+    <text x="60" y="271" fill="#a09c93" font-size="12">second SEP, then bluealsa-aplay</text>
+
+    <!-- merge curves -->
+    <path d="M340 121 C 375 121, 375 180, 410 180" fill="none" stroke="#d6d2c9" stroke-width="2"/>
+    <path d="M340 239 C 375 239, 375 180, 410 180" fill="none" stroke="#d6d2c9" stroke-width="2"/>
+
+    <!-- Mixer -->
+    <rect x="410" y="96" width="270" height="168" rx="12" fill="#191917" stroke="#c69a5b"/>
+    <text x="434" y="128" fill="#a09c93" font-size="11" letter-spacing="1.4">MIXER</text>
+    <text x="434" y="156" fill="#e9ecf1" font-size="15" font-weight="600">Per-input gain, mute,</text>
+    <text x="434" y="177" fill="#e9ecf1" font-size="15" font-weight="600">placement, master</text>
+    <text x="434" y="206" fill="#a09c93" font-size="13">Headroom -6 dB, limiter optional</text>
+    <text x="434" y="234" fill="#c69a5b" font-size="12">Internal gain, not device volume</text>
+
+    <!-- output curve -->
+    <path d="M680 180 L 742 180" fill="none" stroke="#d6d2c9" stroke-width="2"/>
+    <circle cx="737" cy="180" r="2.5" fill="#c69a5b"/>
+
+    <!-- Output -->
+    <rect x="742" y="132" width="138" height="96" rx="12" fill="#191917" stroke="#302f2b"/>
+    <circle cx="766" cy="158" r="4" fill="#7fa68c"/>
+    <text x="782" y="163" fill="#cfcac0" font-size="15" font-weight="600">Output</text>
+    <text x="762" y="190" fill="#a09c93" font-size="13">A2DP source</text>
+    <text x="762" y="209" fill="#a09c93" font-size="12">one endpoint</text>
+
+    <circle cx="375" cy="180" r="2.5" fill="#c69a5b"/>
+  </g>
+</svg>

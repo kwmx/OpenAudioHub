@@ -25,6 +25,10 @@ type UpdateStatus struct {
 	Running   bool   `json:"running"`
 }
 
+// updateUnit is the transient systemd unit that performs the install. It must not
+// be a child of the daemon, which the installer restarts.
+const updateUnit = "openaudiohub-update"
+
 func updateRepo() string {
 	if v := strings.TrimSpace(getenv("OPENAUDIOHUB_REPO")); v != "" {
 		return v
@@ -192,32 +196,29 @@ func (a *App) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	updateRun = true
 	updateMu.Unlock()
 
-	go func() {
-		defer func() {
-			updateMu.Lock()
-			updateRun = false
-			updateMu.Unlock()
-			a.signalRefresh()
-		}()
-		a.logf("update: installing %s (from %s)", st.Latest, a.version)
-		out, err := a.run.Run(15*time.Minute, "/usr/local/lib/openaudiohub/update.sh", "install", st.Latest)
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-			if line != "" {
-				a.logf("update: %s", line)
-			}
-		}
-		if err != nil {
-			a.logf("update failed: %v", err)
-			updateMu.Lock()
-			updateNotice = "Update failed. Inspect Diagnostics; the previous version is still installed."
-			updateMu.Unlock()
-			return
-		}
+	// The installer stops this service. Running update.sh as a child of this unit
+	// put it in the same cgroup, so systemd killed the updater the moment the
+	// installer stopped the daemon: the service went down and never came back. A
+	// transient unit is independent of this one, so it survives the restart it
+	// performs. Progress lands in the journal under OPENAUDIOHUB_UPDATE_UNIT.
+	a.logf("update: starting %s (from %s) as unit %s", st.Latest, a.version, updateUnit)
+	if _, err := a.run.Run(30*time.Second, "systemd-run",
+		"--unit="+updateUnit,
+		"--description=OpenAudioHub release update",
+		"--collect",
+		"/usr/local/lib/openaudiohub/update.sh", "install", st.Latest); err != nil {
 		updateMu.Lock()
-		updateNotice = "Updated to " + st.Latest + ". Reload this page."
-		updateState.Available = false
+		updateRun = false
+		updateNotice = "The update could not be started. Inspect Diagnostics."
 		updateMu.Unlock()
-	}()
+		a.logf("update failed to start: %v", err)
+		a.signalRefresh()
+		return
+	}
+	updateMu.Lock()
+	updateNotice = "Installing " + st.Latest + ". The hub restarts itself; this page will reconnect."
+	updateMu.Unlock()
+	a.signalRefresh()
 
 	writeJSON(w, 202, map[string]any{"ok": true, "installing": st.Latest})
 }
