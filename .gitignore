@@ -4,6 +4,10 @@
 # Local-only design prototypes and scratch uploads
 /docs/design/
 
+# Device-specific secrets for our own test hardware. Never publish: anything here
+# is expected to hold credentials, addresses or keys for a specific board.
+/local/
+
 # macOS Finder metadata (never publish)
 .DS_Store
 ._*
