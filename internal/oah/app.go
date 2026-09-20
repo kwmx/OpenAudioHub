@@ -42,8 +42,11 @@ type App struct {
 	deviceNames     map[string]string
 	deviceNamesPath string
 	// Bounded cache of BlueZ device detail for unpaired, discovered devices.
-	deviceInfoMu    sync.Mutex
-	deviceInfo      map[string]deviceInfoEntry
+	deviceInfoMu sync.Mutex
+	deviceInfo   map[string]deviceInfoEntry
+	// Per-address Bluetooth connect backoff; see backoff.go.
+	connectMu       sync.Mutex
+	connectState    map[string]*connectState
 	stateBuildMu    sync.Mutex
 	stateCacheMu    sync.RWMutex
 	stateCache      State
@@ -68,7 +71,7 @@ func NewApp(configPath, version string) (*App, error) {
 		return nil, err
 	}
 	namePath := deviceNameCachePath(configPath)
-	a := &App{cfg: cfg, run: runner{}, version: version, listen: cfg.Get().Listen, deviceNames: loadDeviceNameCache(namePath), deviceNamesPath: namePath, deviceInfo: map[string]deviceInfoEntry{}, sse: map[chan []byte]struct{}{}, refresh: make(chan struct{}, 1), reconcileReq: make(chan string, 1)}
+	a := &App{cfg: cfg, run: runner{}, version: version, listen: cfg.Get().Listen, deviceNames: loadDeviceNameCache(namePath), deviceNamesPath: namePath, deviceInfo: map[string]deviceInfoEntry{}, connectState: map[string]*connectState{}, sse: map[chan []byte]struct{}{}, refresh: make(chan struct{}, 1), reconcileReq: make(chan string, 1)}
 	return a, nil
 }
 func (a *App) SetListen(s string) { a.listen = s }

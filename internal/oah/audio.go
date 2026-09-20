@@ -221,6 +221,7 @@ func (a *App) reconcileRoutes(reason string) {
 	a.btOpsMu.Lock()
 	defer a.btOpsMu.Unlock()
 	a.logf("reconcile: %s", reason)
+	now := time.Now()
 
 	c := a.cfg.Get()
 	connected := a.bluetoothDeviceSubset("Connected")
@@ -292,9 +293,14 @@ func (a *App) reconcileRoutes(reason string) {
 		if !a.autoConnectFor(addr) {
 			continue
 		}
+		if a.connectTooSoon(addr, now) {
+			continue
+		}
 		// Even if the generic Bluetooth ACL is already connected, explicitly request
 		// A2DP when its media transport is missing.
-		if _, err := a.run.Run(12*time.Second, "bluetoothctl", "connect", addr, "a2dp-sink"); err != nil {
+		_, err := a.run.Run(connectTimeout, "bluetoothctl", "connect", addr, "a2dp-sink")
+		a.noteConnectAttempt(addr, err == nil, now)
+		if err != nil {
 			a.logf("auto-connect output %s: %v", addr, err)
 		} else {
 			connected[addr] = true
@@ -379,7 +385,12 @@ func (a *App) reconcileRoutes(reason string) {
 		if inputMedia[addr] || !a.autoConnectFor(addr) {
 			continue
 		}
-		if _, err := a.run.Run(12*time.Second, "bluetoothctl", "connect", addr, "a2dp-source"); err != nil {
+		if a.connectTooSoon(addr, now) {
+			continue
+		}
+		_, err := a.run.Run(connectTimeout, "bluetoothctl", "connect", addr, "a2dp-source")
+		a.noteConnectAttempt(addr, err == nil, now)
+		if err != nil {
 			a.logf("auto-connect input %s: %v", addr, err)
 		} else {
 			connected[addr] = true

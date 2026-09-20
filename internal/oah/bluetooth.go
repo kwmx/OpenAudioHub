@@ -159,7 +159,13 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		} else if aclConnected && devices[i].Role != "" {
 			devices[i].Status = "connecting"
 		} else if devices[i].Role != "" {
-			devices[i].Status = "disconnected"
+			// Repeated failures need to look different from "not tried yet", otherwise
+			// the UI shows "Connecting…" indefinitely and offers no retry.
+			if a.connectFailureCount(strings.ToUpper(devices[i].Addr)) >= 2 {
+				devices[i].Status = "error"
+			} else {
+				devices[i].Status = "disconnected"
+			}
 		}
 	}
 	bluealsaStates := a.bluealsaPCMStates()
@@ -531,6 +537,11 @@ func (a *App) btAction(addr, action string) error {
 		return nil
 	}
 
+	if action == "connect" || action == "disconnect" {
+		// A deliberate user action must not be throttled by earlier auto-connect
+		// failures, and must clear a previous failure so the UI can recover.
+		a.forgetConnectState(addr)
+	}
 	switch action {
 	case "pair":
 		if out, e := a.run.Run(3*time.Second, "bluetoothctl", "devices"); e == nil {
@@ -538,8 +549,18 @@ func (a *App) btAction(addr, action string) error {
 				a.rememberDeviceName(addr, name)
 			}
 		}
-		if _, err := a.run.Run(20*time.Second, "bluetoothctl", "pair", addr); err != nil {
+		// Pairing a headset routinely takes longer than a controller round trip: the
+		// peer may first have to establish a link, and some devices wait for the user
+		// to confirm. A short deadline killed bluetoothctl mid-pairing, which left the
+		// device trusted but unbonded and made the UI ask to pair again.
+		if _, err := a.run.Run(pairTimeout, "bluetoothctl", "pair", addr); err != nil {
 			return err
+		}
+		// Do not trust the exit status alone. A raced or interrupted attempt can exit
+		// without storing a bond, and trusting an unbonded device is what produced the
+		// "Paired: no / Trusted: yes" state that kept the UI asking to pair.
+		if d := a.bluetoothInfo(addr, ""); !d.Paired {
+			return fmtErr("the device did not complete pairing — put it in pairing mode and try again")
 		}
 		// Audio reconnects should not block on authorization prompts after pairing.
 		_, _ = a.run.Run(5*time.Second, "bluetoothctl", "trust", addr)
@@ -564,7 +585,7 @@ func (a *App) btAction(addr, action string) error {
 		} else if strings.HasPrefix(role, "out") {
 			args = append(args, "a2dp-sink")
 		}
-		_, err := a.run.Run(15*time.Second, "bluetoothctl", args...)
+		_, err := a.run.Run(connectTimeout, "bluetoothctl", args...)
 		if err == nil && strings.HasPrefix(role, "out") {
 			a.setDefaultOutput(addr)
 		}

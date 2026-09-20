@@ -260,6 +260,7 @@ func (a *App) handleBTRole(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(oldRole, "in") || strings.HasPrefix(q.Role, "in") {
 		reason = "input roles changed"
 	}
+	a.resetConnectState()
 	a.requestReconcile(reason)
 	writeJSON(w, 202, map[string]any{"ok": true, "revision": a.cfg.Get().Revision})
 }
