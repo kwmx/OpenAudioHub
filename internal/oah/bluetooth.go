@@ -601,17 +601,20 @@ func (a *App) btAction(addr, action string) error {
 		return nil
 	case "connect":
 		role := a.roleFor(addr)
-		// A device with no role has no route, so connecting it as an input or output
-		// cannot succeed. Say that plainly instead of surfacing a raw BlueZ error.
+		// A device with no role has no route, so connecting it cannot produce audio.
+		// Never fall through to a raw BlueZ error: whether the capability read
+		// succeeds or not, the actionable answer is the same.
 		if role == "" {
-			info := a.bluetoothInfo(addr, "")
+			caps := a.bluetoothInfo(addr, "").Caps
 			switch {
-			case contains(info.Caps, "plays_audio") && contains(info.Caps, "sends_audio"):
-				return fmtErr("assign this device to an input or output before connecting it")
-			case contains(info.Caps, "sends_audio"):
+			case contains(caps, "sends_audio") && contains(caps, "plays_audio"):
+				return fmtErr("assign this device to an input or an output before connecting it")
+			case contains(caps, "sends_audio"):
 				return fmtErr("assign this device to Input 1 or Input 2 before connecting it")
-			case contains(info.Caps, "plays_audio"):
+			case contains(caps, "plays_audio"):
 				return fmtErr("assign this device to an output before connecting it")
+			default:
+				return fmtErr("assign this device to a slot before connecting it")
 			}
 		}
 		args := []string{"connect", addr}
