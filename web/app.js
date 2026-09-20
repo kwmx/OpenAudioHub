@@ -205,7 +205,8 @@ function getDevice(addr){const a=String(addr||'').toUpperCase();return model.sta
 function assignedAction(d){
   if(!d)return '';
   const act=d.connected?'disconnect':'connect';
-  return btn(d.connected?'Disconnect':d.status==='connecting'?'Cancel':d.status==='error'?'Retry':'Connect',`bt-action:${act}:${d.addr}`,'secondary',model.btBusy?'disabled':'');
+  const label=d.connected?'Disconnect':d.status==='connecting'?'Cancel':d.status==='error'?'Retry':d.status==='blocked'?'Use this output':'Connect';
+  return btn(label,`bt-action:${act}:${d.addr}`,'secondary',model.btBusy?'disabled':'');
 }
 function autoToggle(d){
   if(!d)return '';

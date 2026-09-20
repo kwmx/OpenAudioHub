@@ -160,7 +160,7 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		if strings.HasPrefix(devices[i].Role, "out") && !devices[i].Connected {
 			for _, other := range devices {
 				if other.Addr != devices[i].Addr && strings.HasPrefix(other.Role, "out") && outputTransport[strings.ToUpper(other.Addr)] {
-					devices[i].Reason = "Another output is active. Only one Bluetooth output can play at a time — disconnect it to use this one."
+					devices[i].Reason = "This engine has one A2DP source endpoint, so only one Bluetooth output can play at a time. Use this output to switch to it."
 					devices[i].Status = "blocked"
 					break
 				}
@@ -312,6 +312,26 @@ func tailAddr(addr string) string {
 		return strings.Join(p[len(p)-2:], ":")
 	}
 	return addr
+}
+
+// activeOutputHolder returns the assigned output that currently holds the engine's
+// single A2DP source transport, ignoring except. Connecting another output means
+// taking the endpoint from this one.
+func (a *App) activeOutputHolder(except string) string {
+	except = strings.ToUpper(cleanAddr(except))
+	assigned := map[string]bool{}
+	for _, raw := range a.cfg.Get().Slots.Outputs {
+		if raw != "" {
+			assigned[strings.ToUpper(raw)] = true
+		}
+	}
+	for _, t := range a.listTransports() {
+		addr := strings.ToUpper(t.Addr)
+		if strings.Contains(t.UUID, "Audio Source") && addr != except && assigned[addr] {
+			return addr
+		}
+	}
+	return ""
 }
 
 func (a *App) roleFor(addr string) string {
@@ -597,6 +617,16 @@ func (a *App) btAction(addr, action string) error {
 			}
 			args = append(args, "a2dp-source")
 		} else if strings.HasPrefix(role, "out") {
+			// The engine has a single A2DP source endpoint, so connecting a second
+			// output is a switch, not an addition. Release the output that currently
+			// holds the endpoint first; otherwise BlueZ answers with
+			// "Unable to select SEP" / br-connection-create-socket and the attempt can
+			// never succeed.
+			if holder := a.activeOutputHolder(addr); holder != "" {
+				a.logf("switching output: releasing %s first", holder)
+				_, _ = a.run.Run(10*time.Second, "bluetoothctl", "disconnect", holder)
+				time.Sleep(1200 * time.Millisecond)
+			}
 			args = append(args, "a2dp-sink")
 		}
 		_, err := a.run.Run(connectTimeout, "bluetoothctl", args...)
