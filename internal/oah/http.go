@@ -42,6 +42,8 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/system/password", a.requireAuth(a.handlePasswordChange))
 	mux.HandleFunc("GET /api/system/backup", a.requireAuth(a.handleBackup))
 	mux.HandleFunc("POST /api/system/restore", a.requireAuth(a.handleRestore))
+	mux.HandleFunc("GET /api/system/update", a.requireAuth(a.handleUpdateCheck))
+	mux.HandleFunc("POST /api/system/update", a.requireAuth(a.handleUpdateApply))
 	mux.HandleFunc("GET /api/diagnostics", a.requireAuth(a.handleDiagnostics))
 
 	webRoot := os.Getenv("OPENAUDIOHUB_WEB")
@@ -229,16 +231,12 @@ func (a *App) handleBTRole(w http.ResponseWriter, r *http.Request) {
 	// connected source consuming one of the two A2DP sink endpoints.
 	oldOccupant := ""
 	before := a.cfg.Get()
-	switch q.Role {
-	case "in1":
-		if len(before.Slots.Inputs) > 0 {
-			oldOccupant = before.Slots.Inputs[0]
+	switch {
+	case strings.HasPrefix(q.Role, "in"):
+		if idx := atoiLoose(strings.TrimPrefix(q.Role, "in")) - 1; idx >= 0 && idx < len(before.Slots.Inputs) {
+			oldOccupant = before.Slots.Inputs[idx]
 		}
-	case "in2":
-		if len(before.Slots.Inputs) > 1 {
-			oldOccupant = before.Slots.Inputs[1]
-		}
-	case "out1", "out2":
+	case strings.HasPrefix(q.Role, "out"):
 		idx := atoiLoose(strings.TrimPrefix(q.Role, "out")) - 1
 		if idx >= 0 && idx < len(before.Slots.Outputs) {
 			oldOccupant = before.Slots.Outputs[idx]
@@ -490,24 +488,50 @@ func (a *App) handleRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer zr.Close()
+	// Report what actually happened. Silently ignoring a bad member and still
+	// answering 202 told the user a restore succeeded when nothing was applied.
+	applied := 0
 	for _, f := range zr.File {
 		if f.Name != "config.json" && f.Name != "audio.json" {
 			continue
 		}
-		rc, _ := f.Open()
-		b, _ := io.ReadAll(io.LimitReader(rc, 1<<20))
+		rc, err := f.Open()
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": "backup is corrupt"})
+			return
+		}
+		b, err := io.ReadAll(io.LimitReader(rc, 1<<20))
 		_ = rc.Close()
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": "backup is corrupt"})
+			return
+		}
 		if f.Name == "config.json" {
 			var c Config
-			if json.Unmarshal(b, &c) == nil {
-				_ = a.cfg.Replace(c)
+			if err := json.Unmarshal(b, &c); err != nil {
+				writeJSON(w, 400, map[string]string{"error": "backup contains an unreadable config.json"})
+				return
 			}
-		} else {
-			_ = os.WriteFile("/etc/openaudiohub/audio.json", b, 0644)
+			if err := a.cfg.Replace(c); err != nil {
+				a.writeProblem(w, 500, "The backup could not be applied. Existing settings were kept.", "restore config", err)
+				return
+			}
+			applied++
+			continue
 		}
+		if err := os.WriteFile("/etc/openaudiohub/audio.json", b, 0644); err != nil {
+			a.writeProblem(w, 500, "The backup could not be applied. Existing settings were kept.", "restore audio", err)
+			return
+		}
+		applied++
+	}
+	if applied == 0 {
+		writeJSON(w, 400, map[string]string{"error": "backup contains no config.json or audio.json"})
+		return
 	}
 	a.requestReconcile("configuration restored")
-	writeJSON(w, 202, map[string]any{"ok": true, "revision": a.cfg.Get().Revision})
+	a.signalRefresh()
+	writeJSON(w, 202, map[string]any{"ok": true, "revision": a.cfg.Get().Revision, "applied": applied})
 }
 
 func intParam(v string, def int) int {

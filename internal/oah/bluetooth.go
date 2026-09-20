@@ -199,17 +199,16 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 	return devices, nil
 }
 
+// roleRank orders devices in the list: inputs by slot, then outputs, then
+// unassigned. Generic so it does not need editing when a slot is added.
 func roleRank(s string) int {
-	switch s {
-	case "in1":
-		return 0
-	case "in2":
-		return 1
-	case "out1":
-		return 2
-	default:
-		return 9
+	if n := atoiLoose(strings.TrimPrefix(s, "in")); strings.HasPrefix(s, "in") && n > 0 {
+		return n - 1
 	}
+	if n := atoiLoose(strings.TrimPrefix(s, "out")); strings.HasPrefix(s, "out") && n > 0 {
+		return 100 + n
+	}
+	return 900
 }
 
 func (a *App) bluetoothInfo(addr, listedName string) Device {

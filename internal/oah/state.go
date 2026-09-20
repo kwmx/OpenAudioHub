@@ -19,6 +19,8 @@ func (a *App) buildState(includeDiag bool) State {
 	xruns := 0
 	st := State{Revision: c.Revision, Devices: devices, Slots: c.Slots, Mixer: c.Mixer, WiFi: wifi, Audio: c.Audio, System: sys}
 	st.DelayReport = a.delayReport(transports)
+	st.Inputs = InputCapacity{Max: maxInputs, Proven: provenInputs}
+	st.ReceiverInputs = bluealsaReceiverLabel(c)
 	a.mu.RLock()
 	st.Pairing = a.pairing
 	a.mu.RUnlock()

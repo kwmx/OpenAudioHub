@@ -5,6 +5,7 @@
   /* Surfaces (warm charcoal → graphite, tonal steps not hue shifts) */
   --bg: #11110f;
   --bg-sunken: #151513;      /* strips, inputs, log panes */
+  --surface-translucent: rgba(17,17,15,.97); /* sticky bars over content */
   --surface: #191917;        /* cards */
   --raised: #20201d;         /* secondary buttons, active nav, dialogs */
   --border: #302f2b;         /* card hairlines and control borders */
@@ -21,6 +22,9 @@
   /* Accent — selection and active controls only */
   --accent: #c69a5b;
   --accent-hover: #d4aa6a;
+  /* Accent used as text. Same hue; light mode needs a darker step because the
+     fill brass only reaches 2.46:1 on a light surface. */
+  --accent-ink: #c69a5b;
   --accent-tint: rgba(198, 154, 91, .14);
   --on-accent: #11110f;
 
@@ -85,4 +89,47 @@
   --content-max: 1280px;
   --rail-columns: minmax(0, 1fr) 48px minmax(300px, 1.2fr) 48px minmax(0, 1fr);
   --shadow-overlay: 0 8px 24px rgba(0, 0, 0, .4);
+}
+
+
+/* ---------------------------------------------------------------------------
+   Light theme.
+   The design mock (docs/design) is dark-only, so this is derived from its stated
+   direction — warm surfaces, off-white text, one brass accent — inverted rather
+   than tuned. Hue is unchanged; only lightness moves, so contrast holds:
+   brass ink 5.38:1, body text 15.2:1, muted 5.3:1 on the card surface.
+   --------------------------------------------------------------------------- */
+:root[data-theme="light"]{color-scheme:light;
+  --bg:#f6f5f2; --bg-sunken:#efece7; --surface:#fbfaf8; --raised:#f1eee9;
+  --surface-translucent:rgba(246,245,242,.97);
+  --border:#dcd8d0; --border-strong:#c3beb3; --divider:#e7e3dc; --track:#d8d3ca;
+  --text:#1b1a17; --text-secondary:#3f3c36; --text-muted:#6b675f; --text-disabled:#9a958c;
+  --accent:#c69a5b; --accent-hover:#b98a48; --accent-ink:#8a5f24;
+  --accent-tint:rgba(138,95,36,.10); --on-accent:#11110f;
+  --path-active:#6b675f; --path-idle:#d8d3ca;
+  --state-connected:#4f7a5f; --state-connecting:#5a7089; --state-warning:#8a6a2e; --state-error:#a04a45;
+  --state-warning-tint:rgba(138,106,46,.10); --state-warning-border:rgba(138,106,46,.40);
+  --state-error-tint:rgba(160,74,69,.08); --state-error-border:rgba(160,74,69,.45);
+  --state-connected-tint:rgba(79,122,95,.08); --state-connected-border:rgba(79,122,95,.35);
+  --state-connecting-tint:rgba(90,112,137,.10); --state-connecting-border:rgba(90,112,137,.35);
+  --danger-text:#8f3f3a;
+  --shadow-overlay:0 8px 24px rgba(30,28,24,.12);
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){color-scheme:light;
+    --bg:#f6f5f2; --bg-sunken:#efece7; --surface:#fbfaf8; --raised:#f1eee9;
+    --surface-translucent:rgba(246,245,242,.97);
+    --border:#dcd8d0; --border-strong:#c3beb3; --divider:#e7e3dc; --track:#d8d3ca;
+    --text:#1b1a17; --text-secondary:#3f3c36; --text-muted:#6b675f; --text-disabled:#9a958c;
+    --accent:#c69a5b; --accent-hover:#b98a48; --accent-ink:#8a5f24;
+    --accent-tint:rgba(138,95,36,.10); --on-accent:#11110f;
+    --path-active:#6b675f; --path-idle:#d8d3ca;
+    --state-connected:#4f7a5f; --state-connecting:#5a7089; --state-warning:#8a6a2e; --state-error:#a04a45;
+    --state-warning-tint:rgba(138,106,46,.10); --state-warning-border:rgba(138,106,46,.40);
+    --state-error-tint:rgba(160,74,69,.08); --state-error-border:rgba(160,74,69,.45);
+    --state-connected-tint:rgba(79,122,95,.08); --state-connected-border:rgba(79,122,95,.35);
+    --state-connecting-tint:rgba(90,112,137,.10); --state-connecting-border:rgba(90,112,137,.35);
+    --danger-text:#8f3f3a;
+    --shadow-overlay:0 8px 24px rgba(30,28,24,.12);
+  }
 }

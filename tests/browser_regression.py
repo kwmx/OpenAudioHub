@@ -11,8 +11,8 @@ STATE={
 'mixer':{'gains':[0,0],'mutes':[False,False],'placement':['stereo','stereo'],'master':0,'masterMute':False,'headroomDb':-6,'limiter':False},
 'audio':{'preset':'balanced','preferredRate':48000,'allowedRates':[44100,48000],'quantum':2048,'bluealsaPeriodUs':100000,'bluealsaBufferUs':500000,'resampler':'auto','codecPolicy':'compatibility','liveMeters':False,'secondarySbcMaxBitpool':35,'secondaryAdvertisedDelayMs':0},
 'wifi':{'ssid':'Test-5G','band':'5 GHz','freq':5180},
-'system':{'hostname':'openaudiohub','mdns':'openaudiohub.local','btName':'OpenAudioHub','version':'0.1.6-rc1','uptime':'1h'},
-'health':{'wifi':{'state':'connected','value':'Test-5G · 5 GHz'},'bluetooth':{'state':'connected','value':'2 inputs · 1 output'},'audio':{'state':'connected','value':'Running'},'system':{'state':'connected','value':'Healthy'}},'pairing':{},'delayReport':{'requestedMs':150,'state':'reported','input':'Input 2 (BlueALSA receiver)','addr':'AA:AA:AA:AA:AA:02','attempt':'reported','detail':'The acquired transport reports this total.','actualMs':150,'actualKnown':True,'attemptedAt':'2026-09-19T20:00:00Z','capable':True}}
+'system':{'hostname':'openaudiohub','mdns':'openaudiohub.local','btName':'OpenAudioHub','version':'0.1.17','uptime':'1h'},
+'health':{'wifi':{'state':'connected','value':'Test-5G · 5 GHz'},'bluetooth':{'state':'connected','value':'2 inputs · 1 output'},'audio':{'state':'connected','value':'Running'},'system':{'state':'connected','value':'Healthy'}},'inputCapacity':{'max':4,'proven':2},'pairing':{},'delayReport':{'requestedMs':150,'state':'reported','input':'Input 2 (BlueALSA receiver)','addr':'AA:AA:AA:AA:AA:02','attempt':'reported','detail':'The acquired transport reports this total.','actualMs':150,'actualKnown':True,'attemptedAt':'2026-09-19T20:00:00Z','capable':True}}
 class BrowserRegression(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
@@ -61,7 +61,7 @@ class BrowserRegression(unittest.TestCase):
   value=sel.input_value()
   for _ in range(4):self.emit()
   self.assertTrue(sel.evaluate('e=>e===window.savedSelect'));self.assertEqual(sel.input_value(),value)
-  self.page.keyboard.press('Escape');self.page.locator('[data-audio="quantum"]').fill('4096');self.page.locator('h1').click()
+  self.page.keyboard.press('Escape');self.page.locator('[data-audio="quantum"]').select_option('4096');self.page.locator('h1').click()
   self.emit();self.assertEqual(self.page.locator('[data-audio="quantum"]').input_value(),'4096')
   self.page.screenshot(path=str(ROOT/'tests/artifacts/audio-desktop.png'))
  def test_real_slider_drag_survives_telemetry(self):
@@ -121,7 +121,7 @@ class BrowserRegression(unittest.TestCase):
    self.assertIn(label,card.inner_text())
   # The affected input must always be named, and the primary marked unsupported.
   self.assertIn('Input 2',card.inner_text())
-  self.assertIn('Input 1 runs on PipeWire',card.inner_text())
+  self.assertIn('Input 1 is PipeWire',card.inner_text())
  def test_devices_are_grouped_by_setup_state(self):
   # Paired and freshly discovered devices used to share one grid, which made an
   # already-set-up device indistinguishable from a new find.
@@ -142,9 +142,62 @@ class BrowserRegression(unittest.TestCase):
   self.assertIn('Not paired', card.inner_text())
   self.assertEqual(card.locator('.device-icon svg').count(),1)
   self.assertFalse(card.locator('select').is_enabled(),'an unpaired device must not be assignable')
+ def test_extra_inputs_are_experimental_and_draw(self):
+  # Beyond the validated count the rail must still render, the merge must produce
+  # one curve per input, and the UI must say plainly that it is experimental.
+  st=self.page.evaluate('window.__server.state')
+  st['inputCapacity']={'max':4,'proven':2}
+  st['slots']['inputs']=['AA:AA:AA:AA:AA:01','AA:AA:AA:AA:AA:02','AA:AA:AA:AA:AA:05','AA:AA:AA:AA:AA:06']
+  st['mixer']['gains']=[0,0,0,0];st['mixer']['mutes']=[False]*4;st['mixer']['placement']=['stereo']*4
+  for i,(a,n) in enumerate([('AA:AA:AA:AA:AA:05','Tablet'),('AA:AA:AA:AA:AA:06','Laptop')]):
+   st['devices'].append({'addr':a,'name':n,'kind':'source','caps':['sends_audio'],'icon':'phone','connected':True,'paired':True,'role':'in'+str(i+3),'backend':'bluealsa','volumeKnown':True,'volume':70,'codec':'SBC','rate':44100,'rssi':-60})
+  self.emit(lambda s: s.update(st))
+  self.page.wait_for_timeout(300)
+  rail=self.page.locator('.signal-rail')
+  self.assertEqual(rail.locator('.input-column .node-card').count(),4)
+  self.assertEqual(rail.locator('[data-conn="merge"] path').count(),4)
+  self.assertEqual(rail.locator('.channel').count(),4)
+  text=self.page.locator('.page').inner_text()
+  self.assertIn('experimental',text.lower())
+  self.assertIn('4 inputs in use',text)
+  self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),1440)
+ def test_every_input_slot_offers_a_role(self):
+  self.route('Devices')
+  sel=self.page.locator('select[data-role-addr="AA:AA:AA:AA:AA:01"]')
+  opts=' '.join(sel.locator('option').all_inner_texts())
+  # one option per configured input slot, generated rather than hardcoded
+  for i in range(1,self.page.evaluate('window.__server.state.inputCapacity.max')+1):
+   self.assertIn('Input %d'%i,opts)
+ def test_buffer_options_are_only_safe_combinations(self):
+  # The backend requires period % 10ms == 0, buffer >= 3 periods and an exact
+  # multiple of it. A selection must not be able to express anything else.
+  self.route('Audio')
+  sel=self.page.locator('[data-buffer-pair]')
+  self.assertTrue(sel.count()==1,'expected a single buffering selection')
+  opts=sel.locator('option').evaluate_all("os=>os.map(o=>o.value)")
+  self.assertTrue(len(opts)>=3,'expected several safe options')
+  for v in opts:
+   p,b=[int(x) for x in v.split(':')]
+   self.assertEqual(p%10000,0,'period must be a 10 ms multiple: %d'%p)
+   self.assertGreaterEqual(b,p*3,'buffer must be at least 3 periods: %d/%d'%(p,b))
+   self.assertEqual(b%p,0,'buffer must be an exact multiple of the period: %d/%d'%(p,b))
+   self.assertLessEqual(b,1000000,'buffer must not exceed 1 s: %d'%b)
+  # Choosing a pair marks the preset custom, which means no preset is active.
+  sel.select_option(opts[0])
+  self.page.wait_for_timeout(250)
+  self.assertEqual(self.page.locator('button[data-preset].active').count(),0,
+                   'editing buffering should leave the preset as Custom')
+  # and the selection survives telemetry like any other unsaved edit
+  self.emit()
+  self.assertEqual(sel.input_value(),opts[0],'selection was reset by telemetry')
  def test_receiver_details_and_mobile_layout(self):
-  self.page.locator('.receiver-details').nth(1).locator('summary').click();self.emit()
-  self.assertTrue(self.page.locator('.receiver-details').nth(1).evaluate('e=>e.open'))
+  # The receiver block moved to the Audio page as a hint; the remaining
+  # disclosure on the dashboard is the calibration guide on the Audio route.
+  self.route('Audio')
+  cal=self.page.locator('.calibration')
+  cal.locator('summary').click();self.emit()
+  self.assertTrue(cal.evaluate('e=>e.open'))
+  self.route('Dashboard')
   self.page.screenshot(path=str(ROOT/'tests/artifacts/dashboard-desktop.png'))
   self.page.set_viewport_size({'width':390,'height':844});self.emit();self.page.screenshot(path=str(ROOT/'tests/artifacts/dashboard-mobile.png'))
   self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),392)

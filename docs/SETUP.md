@@ -1,4 +1,4 @@
-# Setup / upgrade — OpenAudioHub 0.1.6-rc1
+# Setup / upgrade — OpenAudioHub 0.1.17
 
 This is an integration candidate, not a hardware-qualified appliance image.
 Read `VALIDATION.md` and complete the acceptance checks below before relying on
@@ -9,9 +9,9 @@ it. Keep any existing working setup until the cold-boot and playback checks pass
 Use a **new folder** rather than mixing files from previous versions:
 
 ```bash
-mkdir -p ~/openaudiohub-upgrades/0.1.6-rc1
-unzip OpenAudioHub-0.1.6-rc1.zip -d ~/openaudiohub-upgrades/0.1.6-rc1
-cd ~/openaudiohub-upgrades/0.1.6-rc1/OpenAudioHub
+mkdir -p ~/openaudiohub-upgrades/0.1.17
+unzip OpenAudioHub-0.1.17.zip -d ~/openaudiohub-upgrades/0.1.17
+cd ~/openaudiohub-upgrades/0.1.17/OpenAudioHub
 ```
 
 The ZIP contains the full source, scripts, frontend, test report, and ARM64/AMD64
@@ -77,7 +77,7 @@ systemctl --user status openaudiohub-bluealsa-aplay.service --no-pager
 sudo stat -c '%a %U:%G %n' /etc/openaudiohub/{config,audio}.json
 ```
 
-Expected daemon version: `0.1.6-rc1`. The legacy **user** `bluealsa-aplay` service
+Expected daemon version: `0.1.17`. The legacy **user** `bluealsa-aplay` service
 should be absent/inactive. The managed player may wait for an assigned receiver.
 `config.json` must stay `600 root:root`; `audio.json` is the non-secret `644`
 projection used by the unprivileged bridge. Do not chmod the private file to 644.

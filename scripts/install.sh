@@ -6,7 +6,7 @@ if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="0.1.6-rc1"
+VERSION="0.1.17"
 exec 9>/run/lock/openaudiohub-install.lock
 flock -n 9 || { echo 'Another OpenAudioHub install is running.' >&2; exit 1; }
 
@@ -111,6 +111,7 @@ install -m 0755 "$ROOT_DIR/packaging/scripts/apply-audio.sh" /usr/local/lib/open
 install -m 0755 "$ROOT_DIR/packaging/scripts/netplan_wifi.py" /usr/local/lib/openaudiohub/netplan_wifi.py
 install -m 0755 "$ROOT_DIR/packaging/scripts/bt_agent.py" /usr/local/lib/openaudiohub/bt_agent.py
 install -m 0755 "$ROOT_DIR/packaging/scripts/collect-diagnostics.sh" /usr/local/bin/openaudiohub-diagnostics
+install -m 0755 "$ROOT_DIR/scripts/update.sh" /usr/local/lib/openaudiohub/update.sh
 rm -rf /usr/share/openaudiohub/web/*
 cp -a "$ROOT_DIR/web/." /usr/share/openaudiohub/web/
 

@@ -1,4 +1,4 @@
-> 0.1.6-rc1 additions: see RECEIVER.md and VALIDATION.md. Older architecture notes below are retained for context.
+> 0.1.17 additions: see RECEIVER.md and VALIDATION.md. Older architecture notes below are retained for context.
 
 # OpenAudioHub architecture
 

@@ -6,7 +6,7 @@ gain and ear placement, and send the result to **one** Bluetooth headset or
 speaker — all controlled from a local web page, with no cloud dependency.
 
 Reference target: **Orange Pi Zero 2W** running Armbian / Debian Trixie.
-Current version: **0.1.6-rc1** (integration candidate — see [Status](#status)).
+Current version: **0.1.17** (integration candidate — see [Status](#status)).
 
 ## What it does
 
@@ -270,7 +270,7 @@ units and the BlueALSA patch live under `scripts/`, `packaging/` and `patches/`.
 
 ## Status
 
-0.1.6-rc1 is an integration candidate. The host-side test suite passes, but
+0.1.17 is an integration candidate. The host-side test suite passes, but
 on-device acceptance on real hardware is still required. [`VALIDATION.md`](VALIDATION.md)
 lists exactly which checks passed and which remain open; [`docs/SETUP.md`](docs/SETUP.md)
 has the on-device acceptance checklist.

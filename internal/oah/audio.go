@@ -162,12 +162,12 @@ func (a *App) setRole(addr, role string) error {
 		if !d.Paired {
 			return fmtErr("pair the device before assigning a role")
 		}
-		switch role {
-		case "in1", "in2":
+		switch {
+		case strings.HasPrefix(role, "in"):
 			if !contains(d.Caps, "sends_audio") {
 				return fmtErr("this device does not advertise Bluetooth audio output capability")
 			}
-		case "out1", "out2":
+		case strings.HasPrefix(role, "out"):
 			if !contains(d.Caps, "plays_audio") {
 				return fmtErr("this device does not advertise Bluetooth audio playback capability")
 			}
@@ -186,15 +186,15 @@ func (a *App) setRole(addr, role string) error {
 				c.Slots.Outputs[i] = ""
 			}
 		}
-		switch role {
-		case "":
-		case "in1", "in2":
+		switch {
+		case role == "":
+		case strings.HasPrefix(role, "in"):
 			idx := atoiLoose(strings.TrimPrefix(role, "in")) - 1
 			if idx < 0 || idx >= len(c.Slots.Inputs) {
 				return fmtErr("invalid input role")
 			}
 			c.Slots.Inputs[idx] = addr
-		case "out1", "out2":
+		case strings.HasPrefix(role, "out"):
 			idx := atoiLoose(strings.TrimPrefix(role, "out")) - 1
 			if idx < 0 || idx >= len(c.Slots.Outputs) {
 				return fmtErr("invalid output role")
@@ -350,21 +350,23 @@ func (a *App) reconcileRoutes(reason string) {
 
 		if len(inputs) > 1 {
 			_, _ = a.run.Run(8*time.Second, "systemctl", "start", "openaudiohub-bluealsa.service")
-			time.Sleep(700 * time.Millisecond) // allow the second SBC SEP to register
-			second := inputs[1]
-			if a.autoConnectFor(second) || forceRebind {
-				if _, err := a.run.Run(12*time.Second, "bluetoothctl", "connect", second, "a2dp-source"); err != nil {
-					a.logf("secondary input connect %s: %v", second, err)
-				} else {
-					connected[second] = true
-					inputMedia[second] = true
+			time.Sleep(700 * time.Millisecond) // allow the BlueALSA SBC SEPs to register
+			// Every input beyond the first attaches to BlueALSA rather than
+			// PipeWire, because PipeWire contributes a single A2DP sink SEP. The
+			// order is deliberate: this mirrors the hand-tested sequence, which
+			// establishes the remote transport before attaching the long-lived
+			// player. Beyond two sources this is experimental.
+			for _, extra := range inputs[1:] {
+				if a.autoConnectFor(extra) || forceRebind {
+					if _, err := a.run.Run(12*time.Second, "bluetoothctl", "connect", extra, "a2dp-source"); err != nil {
+						a.logf("secondary input connect %s: %v", extra, err)
+					} else {
+						connected[extra] = true
+						inputMedia[extra] = true
+					}
 				}
+				time.Sleep(250 * time.Millisecond)
 			}
-			// Match the hand-tested staging exactly: establish the second A2DP
-			// transport first, then attach the long-lived BlueALSA->PipeWire
-			// player. Starting the player before the remote transport was not
-			// required by the successful prototype and added an avoidable race.
-			time.Sleep(250 * time.Millisecond)
 			_, _ = a.run.Run(8*time.Second, "systemctl", "start", "openaudiohub-bluealsa-bridge.service")
 		}
 		a.applyMixer()

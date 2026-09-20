@@ -190,16 +190,27 @@ type PairingState struct {
 	Scanning bool      `json:"scanning"`
 }
 
+// InputCapacity tells the UI how many sources the engine can accept and how many
+// have actually been validated. Anything above Proven is experimental.
+type InputCapacity struct {
+	Max    int `json:"max"`
+	Proven int `json:"proven"`
+}
+
 type State struct {
-	Revision    uint64       `json:"revision"`
-	Devices     []Device     `json:"devices"`
-	Slots       SlotsConfig  `json:"slots"`
-	Mixer       MixerConfig  `json:"mixer"`
-	WiFi        WiFiState    `json:"wifi"`
-	Audio       AudioConfig  `json:"audio"`
-	DelayReport DelayReport  `json:"delayReport"`
-	System      SystemState  `json:"system"`
-	Health      Health       `json:"health"`
-	Diagnostics Diagnostics  `json:"diagnostics"`
-	Pairing     PairingState `json:"pairing"`
+	Revision uint64        `json:"revision"`
+	Inputs   InputCapacity `json:"inputCapacity"`
+	// ReceiverInputs names the input slots served by the single BlueALSA daemon.
+	// Its SBC cap and delay report are per-process, so they cannot differ per input.
+	ReceiverInputs string       `json:"receiverInputs"`
+	Devices        []Device     `json:"devices"`
+	Slots          SlotsConfig  `json:"slots"`
+	Mixer          MixerConfig  `json:"mixer"`
+	WiFi           WiFiState    `json:"wifi"`
+	Audio          AudioConfig  `json:"audio"`
+	DelayReport    DelayReport  `json:"delayReport"`
+	System         SystemState  `json:"system"`
+	Health         Health       `json:"health"`
+	Diagnostics    Diagnostics  `json:"diagnostics"`
+	Pairing        PairingState `json:"pairing"`
 }

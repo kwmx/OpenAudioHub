@@ -141,26 +141,57 @@ func readDelayAttempt() *delayAttempt {
 // a different configured value in the same response would contradict itself: the
 // audio block would say 150 ms while the report still described 0. The verdict is
 // withheld until the next full rebuild rather than guessed.
-func reconcileDelayReport(rep DelayReport, requested int, capable bool) DelayReport {
+func reconcileDelayReport(rep DelayReport, requested int, capable bool, label string) DelayReport {
 	if rep.RequestedMS == requested {
 		return rep
 	}
 	out := DelayReport{
 		RequestedMS: requested,
-		Input:       rep.Input,
 		Addr:        rep.Addr,
 		Capable:     capable,
 		State:       delayPending,
 		Detail:      "Waiting for the receiver to confirm the new value.",
 	}
-	if out.Input == "" {
-		out.Input = "Input 2 (BlueALSA receiver)"
+	if label == "" {
+		label = "Input 2 (BlueALSA receiver)"
 	}
+	out.Input = label
 	if requested == 0 {
 		out.State = delayDefault
 		out.Detail = "Engine default. Nothing is reported to the source."
 	}
 	return out
+}
+
+// bluealsaReceiverInputs lists the assigned input slots that are served by the
+// secondary (BlueALSA) receiver. Input 1 uses the PipeWire SEP; every slot from 2
+// upwards shares BlueALSA, so naming a single "Input 2" became wrong once more
+// than two inputs were supported.
+func bluealsaReceiverInputs(cfg Config) []int {
+	out := []int{}
+	for i, raw := range cfg.Slots.Inputs {
+		if i == 0 {
+			continue
+		}
+		if strings.TrimSpace(raw) != "" {
+			out = append(out, i+1)
+		}
+	}
+	return out
+}
+
+// bluealsaReceiverLabel names the receiver for the UI: a single slot when only one
+// is assigned, a range when several are.
+func bluealsaReceiverLabel(cfg Config) string {
+	slots := bluealsaReceiverInputs(cfg)
+	switch len(slots) {
+	case 0:
+		return "Input 2 (BlueALSA receiver)"
+	case 1:
+		return "Input " + strconv.Itoa(slots[0]) + " (BlueALSA receiver)"
+	default:
+		return "Inputs " + strconv.Itoa(slots[0]) + "\u2013" + strconv.Itoa(slots[len(slots)-1]) + " (BlueALSA receiver)"
+	}
 }
 
 // delayReport derives the state shown for the secondary input. transports must be
@@ -171,7 +202,7 @@ func (a *App) delayReport(transports []Transport) DelayReport {
 	requested := cfg.Audio.SecondaryAdvertisedDelayMS
 	rep := DelayReport{
 		RequestedMS: requested,
-		Input:       "Input 2 (BlueALSA receiver)",
+		Input:       bluealsaReceiverLabel(cfg),
 		Capable:     receiverSupportsDelayReport(),
 	}
 	secondary := ""

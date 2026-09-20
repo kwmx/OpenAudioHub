@@ -20,13 +20,27 @@ import (
 
 const pbkdf2Iterations = 210000
 
-// maxInputs is the engine's hard limit: one A2DP sink SEP each from PipeWire and
-// BlueALSA. maxOutputs is 1 because there is a single A2DP source SEP, so only one
-// Bluetooth output can ever be live.
+// maxOutputs is 1 because there is a single A2DP source SEP, so only one Bluetooth
+// output can ever be live.
+//
+// maxInputs is a capacity, not a guarantee. The engine registers one A2DP sink SEP
+// from PipeWire plus several from BlueALSA (measured: three), and BlueZ allows one
+// stream per SEP, so up to four sources can in principle attach. Two of them is the
+// configuration that has been exercised end to end; anything beyond that is
+// experimental and is labelled as such in the UI. The radio, not the endpoint
+// count, is the likely real limit.
 const (
-	maxInputs  = 2
+	maxInputs  = 4
 	maxOutputs = 1
+	// provenInputs is the count that has been validated on hardware.
+	provenInputs = 2
 )
+
+// MaxInputs exposes the supported input capacity to the UI.
+func MaxInputs() int { return maxInputs }
+
+// ProvenInputs is the number of sources validated without the experimental warning.
+func ProvenInputs() int { return provenInputs }
 
 func defaultConfig() Config {
 	u, _ := user.Current()
@@ -97,8 +111,11 @@ func normalizeConfig(c *Config) {
 	if c.Audio.SecondarySBCMaxBitpool == 0 {
 		c.Audio.SecondarySBCMaxBitpool = 35
 	}
-	if len(c.Slots.Inputs) < 2 {
-		c.Slots.Inputs = append(c.Slots.Inputs, make([]string, 2-len(c.Slots.Inputs))...)
+	if len(c.Slots.Inputs) > maxInputs {
+		c.Slots.Inputs = c.Slots.Inputs[:maxInputs]
+	}
+	for len(c.Slots.Inputs) < maxInputs {
+		c.Slots.Inputs = append(c.Slots.Inputs, "")
 	}
 	if len(c.Slots.Outputs) < 1 {
 		c.Slots.Outputs = []string{""}
