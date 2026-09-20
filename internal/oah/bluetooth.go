@@ -66,6 +66,11 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 
 	devices := make([]Device, 0, len(listed)+len(assigned))
 	seen := map[string]bool{}
+	// Nearby devices used to be described as "unknown" because inspecting every
+	// discovered device on every state build overloaded BlueZ. BlueZ does persist
+	// Icon and UUIDs for discovered devices, so a bounded, cached lookup gives the
+	// UI a real device type without that cost.
+	budget := nearbyInfoBudget
 	for addr, listedName := range listed {
 		seen[addr] = true
 		if usableBluetoothName(listedName, addr) {
@@ -79,6 +84,20 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		if name == "" {
 			name = "Nearby device · " + tailAddr(addr)
 		}
+		if d, ok := a.cachedDeviceInfo(addr, nearbyInfoTTL); ok {
+			d.Name = name
+			devices = append(devices, d)
+			continue
+		}
+		if budget > 0 {
+			budget--
+			d := a.bluetoothInfo(addr, listedName)
+			a.rememberDeviceInfo(addr, d)
+			devices = append(devices, d)
+			continue
+		}
+		// Over budget for this pass: describe what discovery already told us and
+		// refine on a later build rather than blocking the state on BlueZ.
 		devices = append(devices, Device{
 			ID: strings.ReplaceAll(addr, ":", "_"), Addr: addr, Name: name,
 			Kind: "unknown", Caps: []string{}, Status: "disconnected",

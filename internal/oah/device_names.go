@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var macLikeNameRE = regexp.MustCompile(`(?i)^[0-9a-f]{2}([:_-]?[0-9a-f]{2}){5}$`)
@@ -156,4 +157,45 @@ func firstUsableBluetoothName(addr string, candidates ...string) string {
 		}
 	}
 	return ""
+}
+
+// nearbyInfoTTL and nearbyInfoBudget bound how often a discovered-but-unpaired
+// device is inspected with bluetoothctl. BlueZ persists Icon and UUIDs for
+// discovered devices, so a cached lookup still yields a real device type while
+// keeping the per-build subprocess count bounded on a 1 GB board.
+const (
+	nearbyInfoTTL    = 90 * time.Second
+	nearbyInfoBudget = 8
+)
+
+type deviceInfoEntry struct {
+	d  Device
+	at time.Time
+}
+
+func (a *App) cachedDeviceInfo(addr string, ttl time.Duration) (Device, bool) {
+	addr = cleanAddr(addr)
+	if addr == "" {
+		return Device{}, false
+	}
+	a.deviceInfoMu.Lock()
+	defer a.deviceInfoMu.Unlock()
+	e, ok := a.deviceInfo[addr]
+	if !ok || time.Since(e.at) > ttl {
+		return Device{}, false
+	}
+	return e.d, true
+}
+
+func (a *App) rememberDeviceInfo(addr string, d Device) {
+	addr = cleanAddr(addr)
+	if addr == "" {
+		return
+	}
+	a.deviceInfoMu.Lock()
+	defer a.deviceInfoMu.Unlock()
+	if a.deviceInfo == nil {
+		a.deviceInfo = map[string]deviceInfoEntry{}
+	}
+	a.deviceInfo[addr] = deviceInfoEntry{d: d, at: time.Now()}
 }

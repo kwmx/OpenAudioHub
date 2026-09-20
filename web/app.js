@@ -27,7 +27,7 @@ const routes = ['Dashboard', 'Devices', 'Network', 'Audio', 'System', 'Diagnosti
 const esc = (s='') => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const attr = esc;
 const fmtRate = r => r ? `${(r/1000).toFixed(r % 1000 ? 1 : 0)} kHz` : '—';
-const roleLabel = r => ({in1:'Input 1',in2:'Input 2',out1:'Output 1'}[r] || 'Unassigned');
+const roleLabel = r => ({in1:'Input 1',in2:'Input 2',out1:'Output 1',out2:'Output 2'}[r] || 'Unassigned');
 const asArray = v => Array.isArray(v) ? v : [];
 const asObject = v => v && typeof v === 'object' && !Array.isArray(v) ? v : {};
 const finite = (v, fallback=0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
@@ -51,7 +51,7 @@ function normalizeDelay(raw={}){
 function normalizeState(raw={}) {
   const x = asObject(raw), slots = asObject(x.slots), mixer = asObject(x.mixer), wifi = asObject(x.wifi), audio = asObject(x.audio), system = asObject(x.system), health = asObject(x.health), pairing = asObject(x.pairing);
   const inputs = asArray(slots.inputs).slice(0,2).map(v=>String(v||'')); while(inputs.length<2) inputs.push('');
-  const outputs = asArray(slots.outputs).slice(0,1).map(v=>String(v||'')); while(outputs.length<1) outputs.push('');
+  const outputs = asArray(slots.outputs).slice(0,2).map(v=>String(v||'')); while(outputs.length<2) outputs.push('');
   const gains = asArray(mixer.gains).slice(0,2).map(v=>finite(v)); while(gains.length<2) gains.push(0);
   const mutes = asArray(mixer.mutes).slice(0,2).map(Boolean); while(mutes.length<2) mutes.push(false);
   const placement = asArray(mixer.placement).slice(0,2).map(v=>['stereo','left','right'].includes(v)?v:'stereo'); while(placement.length<2) placement.push('stereo');
@@ -212,7 +212,7 @@ function autoToggle(d){
   return `<button class="auto-toggle ${d.autoConnect?'on':''}" data-bt-auto="${attr(d.addr)}" data-auto-enabled="${d.autoConnect?'1':'0'}" ${model.btBusy?'disabled':''}><span>Auto</span><i><b></b></i></button>`;
 }
 function nodeCard(label,d,index,m,output=false){
-  if(!d)return card(`<small class="micro-label">${label}</small><span class="empty-icon">${SVG.device}</span><b>${output?'No output':index===1?'Add second source':'Add a source'}</b><span>${output?'Pair or assign a Bluetooth headset or speaker.':'Pair a phone or computer and assign it to this input.'}</span>${btn('Add device','go-devices')}`,'empty-slot node-card');
+  if(!d)return card(`<small class="micro-label">${label}</small><span class="empty-icon">${SVG.device}</span><b>${output?(index===1?'Add second output':'No output'):index===1?'Add second source':'Add a source'}</b><span>${output?'Pair or assign a Bluetooth headset or speaker.':'Pair a phone or computer and assign it to this input.'}</span>${btn('Add device','go-devices')}`,'empty-slot node-card');
   const connected=d.connected, state=connected?'connected':d.status==='connecting'?'connecting':d.status==='error'?'error':'disconnected';
   const btVolume=Math.max(0,Math.min(100,model.pendingVolumes[d.addr]?.value ?? (d.volumeKnown?finite(d.volume,100):100)));
   if(d.volumeKnown&&btVolume>0) model.btVolumeMemory[d.addr]=btVolume;
@@ -230,7 +230,12 @@ function nodeCard(label,d,index,m,output=false){
 function mergeConnector(a,b){
   return `<div class="connector-svg merge" data-conn="merge"><svg viewBox="0 0 48 400" preserveAspectRatio="none" aria-hidden="true"><path class="${connClass(a)}" d="M0 97 C 24 97, 24 200, 48 200"/><path class="${connClass(b)}" d="M0 303 C 24 303, 24 200, 48 200"/><circle cx="45" cy="200" r="2.5"/></svg></div>`;
 }
-function outConnector(d){return `<div class="connector-svg out" data-conn="out"><svg viewBox="0 0 48 400" preserveAspectRatio="none" aria-hidden="true"><path class="${connClass(d)}" d="M0 200 C 24 200, 24 82, 48 82"/><circle cx="3" cy="200" r="2.5"/></svg></div>`}
+// The out connector represents the mixer feeding the output group, so it takes
+// the most-connected state of the assigned outputs.
+function outConnector(list){
+  const arr=asArray(list).filter(Boolean);
+  const d=arr.find(x=>x.connected)||arr.find(x=>x.status==='connecting')||arr[0];
+  return `<div class="connector-svg out" data-conn="out"><svg viewBox="0 0 48 400" preserveAspectRatio="none" aria-hidden="true"><path class="${connClass(d)}" d="M0 200 C 24 200, 24 82, 48 82"/><circle cx="3" cy="200" r="2.5"/></svg></div>`}
 
 // The connector curves must attach to the real card centres. Card heights depend
 // on content (empty slots, the receiver disclosure, an expanded details panel), so
@@ -257,9 +262,13 @@ function alignConnectors(){
     merge.querySelector('circle')?.setAttribute('cy',my);
   }
   const out=rail.querySelector('[data-conn="out"]');
-  const outCard=rail.querySelector('.output-column .node-card');
-  if(out&&outCard){
-    const cy=+vy(outCard).toFixed(1);
+  // With two outputs, attach to the midpoint of the output cards so the curve
+  // reads as feeding the group. With one output this is exactly that card's
+  // centre, so single-output geometry is unchanged.
+  const outCards=[...rail.querySelectorAll('.output-column .node-card')];
+  if(out&&outCards.length){
+    const centres=outCards.map(vy);
+    const cy=+((Math.min(...centres)+Math.max(...centres))/2).toFixed(1);
     out.querySelector('path')?.setAttribute('d',`M0 ${my} C 24 ${my}, 24 ${cy}, 48 ${cy}`);
     out.querySelector('circle')?.setAttribute('cy',my);
   }
@@ -272,33 +281,41 @@ function queueAlignConnectors(){
 }
 
 function dashboardPage(){
-  const s=model.state,d1=getDevice(s.slots.inputs[0]),d2=getDevice(s.slots.inputs[1]),out=getDevice(s.slots.outputs[0]);
+  const s=model.state,d1=getDevice(s.slots.inputs[0]),d2=getDevice(s.slots.inputs[1]),outs=s.slots.outputs.map(getDevice);
   if(!model.localMixer)model.localMixer=structuredClone(s.mixer);
   const m=model.localMixer;
   return `<div class="page dashboard">${healthStrip()}${model.mixerError?`<div class="warning">${esc(model.mixerError)}${btn('Retry mixer save','mixer-retry')}</div>`:''}${s.health.wifi.warning?`<div class="warning"><span class="warn-icon">${SVG.warning}</span><span class="warn-text">2.4 GHz Wi‑Fi competes with Bluetooth audio. 5 GHz is recommended for multiple streams.</span>${btn('Network','go-network','ghost')}</div>`:''}
-    <div class="path-map">${pill(d1?.connected?'connected':'disconnected',d1?.name||'Input 1')}<span>+</span>${pill(d2?.connected?'connected':'disconnected',d2?.name||'Input 2')}<span>→</span>${pill(out?.connected?'connected':'disconnected',out?.name||'Output')}</div>
+    <div class="path-map">${pill(d1?.connected?'connected':'disconnected',d1?.name||'Input 1')}<span>+</span>${pill(d2?.connected?'connected':'disconnected',d2?.name||'Input 2')}<span>→</span>${outs.filter(Boolean).map(o=>pill(o.connected?'connected':'disconnected',o.name||'Output')).join('')}</div>
     <div class="signal-rail legacy-rail"><div class="input-column">${nodeCard('Input 1',d1,0,m)}${nodeCard('Input 2',d2,1,m)}</div>${mergeConnector(d1,d2)}
     ${card(`<div class="mixer-head"><div><small>Mixer</small><b>Headroom ${m.headroomDb} dB</b></div>${btn('Advanced','go-audio','ghost')}</div>
     ${[0,1].map(i=>`<div class="channel"><div class="channel-top"><span>Input ${i+1}</span><input data-mix-gain="${i}" type="range" min="-30" max="6" step="1" value="${m.gains[i]||0}"><output data-mix-output="${i}">${m.gains[i]||0} dB</output><button class="btn ${m.mutes[i]?'primary':'ghost'}" data-mute="${i}">${m.mutes[i]?'Unmute':'Mute'}</button></div><div class="channel-bottom"><small>Play on</small><div class="segments">${[['stereo','Both'],['left','L'],['right','R']].map(([v,l])=>`<button data-place="${i}:${v}" class="${m.placement[i]===v?'active':''}">${l}</button>`).join('')}</div><small>${m.placement[i]==='stereo'?'Stereo':m.placement[i]==='left'?'Mono to left ear':'Mono to right ear'}</small></div></div>`).join('')}
     <div class="master"><span>Master</span><input id="master-gain" type="range" min="-30" max="6" value="${m.master}"><output id="master-output">${m.master} dB</output><button class="btn ${m.masterMute?'primary':'ghost'}" data-action="master-mute">${m.masterMute?'Unmute':'Mute'}</button></div>`,'mixer')}
-    ${outConnector(out)}<div class="output-column">${nodeCard('Output 1',out,0,m,true)}<div class="future-output">+ Add output <span>Later version</span></div></div></div></div>`;
+    ${outConnector(outs)}<div class="output-column">${[0,1].map(i=>nodeCard('Output '+(i+1),outs[i],i,m,true)).join('')}</div></div></div>`;
 }
 
 function deviceCard(d){
   const caps=asArray(d.caps), assigned=roleLabel(d.role), busy=model.btBusy;
-  const kindLabel=d.kind==='unknown'?(d.paired?'Bluetooth device':'Nearby device'):(d.kind||'Bluetooth device').replaceAll('-',' ');
-  const supportedRoles=new Set(['',...(caps.includes('sends_audio')?['in1','in2']:[]),...(caps.includes('plays_audio')?['out1']:[])]); const staleRole=d.role&&!supportedRoles.has(d.role)?`<option value="${attr(d.role)}" selected>${esc(roleLabel(d.role))} (device missing)</option>`:''; const roleOptions=`<option value="" ${!d.role?'selected':''}>Unassigned</option>${staleRole}${caps.includes('sends_audio')?`<option value="in1" ${d.role==='in1'?'selected':''}>Input 1</option><option value="in2" ${d.role==='in2'?'selected':''}>Input 2</option>`:''}${caps.includes('plays_audio')?`<option value="out1" ${d.role==='out1'?'selected':''}>Output 1</option>`:''}`;
+  const kindLabel=d.kind==='source'?'Sends audio':d.kind==='output'?'Plays audio':d.kind==='audio-bidirectional'?'Sends and plays audio':(d.paired?'Bluetooth device':'Type unknown');
+  const supportedRoles=new Set(['',...(caps.includes('sends_audio')?['in1','in2']:[]),...(caps.includes('plays_audio')?['out1','out2']:[])]); const staleRole=d.role&&!supportedRoles.has(d.role)?`<option value="${attr(d.role)}" selected>${esc(roleLabel(d.role))} (device missing)</option>`:''; const roleOptions=`<option value="" ${!d.role?'selected':''}>Unassigned</option>${staleRole}${caps.includes('sends_audio')?`<option value="in1" ${d.role==='in1'?'selected':''}>Input 1</option><option value="in2" ${d.role==='in2'?'selected':''}>Input 2</option>`:''}${caps.includes('plays_audio')?`<option value="out1" ${d.role==='out1'?'selected':''}>Output 1</option><option value="out2" ${d.role==='out2'?'selected':''}>Output 2</option>`:''}`;
   const actions=[];
   if(!d.paired) actions.push(btn('Pair',`bt-action:pair:${d.addr}`,'secondary',busy?'disabled':''));
   if(d.paired) actions.push(btn(d.connected?'Disconnect':'Connect',`bt-action:${d.connected?'disconnect':'connect'}:${d.addr}`,'secondary',busy?'disabled':''));
   if(d.paired) actions.push(btn('Forget',`bt-action:forget:${d.addr}`,'ghost',busy?'disabled':''));
   return card(`<div class="device-head"><span class="device-icon">${iconFor(d)}</span><div class="device-title"><div><small class="micro-label">${esc(kindLabel)}</small><b title="${attr(d.name)}">${esc(d.name)}</b></div>${pill(d.connected?'connected':'disconnected',d.connected?'Connected':d.paired?'Paired':'Available')}</div></div><div class="meta-row"><span>${esc(d.addr||'Unknown address')}</span><span>${signal(d.rssi)}${d.rssi||'—'}</span></div>
-  <label>Role<select data-role-addr="${attr(d.addr)}" ${(!d.paired&&!d.role)||busy?'disabled':''}>${roleOptions}</select><small>${d.role?(d.paired?`Assigned as ${esc(assigned)}`:`${esc(assigned)} assignment is stale — choose Unassigned to clear it`):'Assign after pairing'}</small></label>
+  <label>Role<select data-role-addr="${attr(d.addr)}" ${(!d.paired&&!d.role)||busy?'disabled':''}>${roleOptions}</select><small>${d.role?(d.paired?`Assigned as ${esc(assigned)}`:`${esc(assigned)} assignment is stale — choose Unassigned to clear it`):(d.paired?'Pick a role to route this device':'Not paired — use Pair first, then assign a role')}</small></label>
   <div class="device-actions">${actions.join('')}</div>`,'device-card');
 }
-function devicesPage(){const s=model.state;let count=0;if(s.pairing.active&&s.pairing.until)count=Math.max(0,Math.ceil((new Date(s.pairing.until)-Date.now())/1000));return `<div class="page"><div class="page-title"><div><h1>Devices</h1><p>Pair Bluetooth devices, assign inputs and choose your output.</p></div></div>
+function devicesPage(){const s=model.state;let count=0;if(s.pairing.active&&s.pairing.until)count=Math.max(0,Math.ceil((new Date(s.pairing.until)-Date.now())/1000));
+  // Paired devices and freshly discovered ones were previously interleaved in one
+  // grid, which made it hard to tell an already-set-up device from a new find.
+  const assigned=s.devices.filter(d=>d.role);
+  const paired=s.devices.filter(d=>!d.role&&d.paired);
+  const found=s.devices.filter(d=>!d.role&&!d.paired);
+  const grid=arr=>`<div class="device-grid">${arr.map(deviceCard).join('')}</div>`;
+  const head=(label,arr)=>`<small>${arr.length}</small>`;
+  return `<div class="page"><div class="page-title"><div><h1>Devices</h1><p>Pair Bluetooth devices, assign inputs and choose your outputs.</p></div></div>
   <div class="pairbar"><div><b>${s.pairing.active?`Pairing mode · ${count}s`:'Pairing mode is off'}</b><span>${s.pairing.active?`Open Bluetooth settings on your phone or computer and choose ${esc(s.system.btName)}.`:'Enable pairing only when adding a device.'}</span></div>${btn(s.pairing.scanning?'Scanning…':'Scan','bt-scan','secondary',s.pairing.scanning||model.btBusy?'disabled':'')}${btn(s.pairing.active?'Stop pairing':'Start pairing','bt-pairing',s.pairing.active?'secondary':'primary',model.btBusy?'disabled':'')}</div>
-  ${s.devices.length?`<div class="device-grid">${s.devices.map(deviceCard).join('')}</div>`:card(`<span class="empty-icon">${SVG.device}</span><b>No Bluetooth devices saved</b><p>Start pairing or scan to add an input or output.</p>`,'empty-slot')}</div>`}
+  ${s.devices.length?`${assigned.length?section('Assigned',grid(assigned),head('Assigned',assigned)):''}${paired.length?section('Paired, not assigned',grid(paired),head('Paired',paired)):''}${found.length?section('Discovered, not paired',grid(found),head('Discovered',found)):''}`:card(`<span class="empty-icon">${SVG.device}</span><b>No Bluetooth devices saved</b><p>Start pairing or scan to add an input or output.</p>`,'empty-slot')}</div>`}
 
 function networkPage(){const s=model.state,w=s.wifi;return `<div class="page"><div class="page-title"><div><h1>Network</h1><p>5 GHz is recommended because Bluetooth audio also uses the 2.4 GHz spectrum.</p></div>${btn('Scan networks','wifi-scan')}</div>${w.apply?`<div class="apply-banner ${attr(w.apply.state)}"><div><b>${w.apply.state==='verifying'?'Confirm this network':esc(w.apply.state)}</b><span>${esc(w.apply.message||'')}</span></div>${w.apply.state==='verifying'?btn('Confirm','wifi-confirm','primary'):''}</div>`:''}
   <div class="network-grid">${card(`<div class="device-title"><div><small>Connected network</small><b>${esc(w.ssid||'Not connected')}</b></div>${pill(w.ssid?(w.band==='2.4 GHz'?'warning':'connected'):'error',w.band)}</div><div class="stats"><div><small>Signal</small><b>${signal(w.rssi)} ${w.rssi||'—'} dBm</b></div><div><small>Channel</small><b>${w.channel||'—'} · ${w.freq||'—'} MHz</b></div><div><small>IP address</small><b>${esc(w.ip||'—')}</b></div><div><small>Reachable at</small><b>${esc(s.system.mdns)}</b></div></div>${w.band==='2.4 GHz'?'<div class="warning compact">2.4 GHz can cause Bluetooth dropouts under multi-stream load.</div>':''}`)}

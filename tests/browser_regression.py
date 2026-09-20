@@ -6,8 +6,8 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 ROOT=Path(__file__).resolve().parents[1]
 STATE={
-'revision':0,'slots':{'inputs':['AA:AA:AA:AA:AA:01','AA:AA:AA:AA:AA:02'],'outputs':['AA:AA:AA:AA:AA:03']},
-'devices':[{'addr':f'AA:AA:AA:AA:AA:0{i}','name':n,'caps':['input' if i<3 else 'output'],'connected':True,'paired':True,'role':['in1','in2','out1'][i-1],'backend':'bluealsa' if i==2 else 'pipewire','volumeKnown':True,'volume':70,'codec':'SBC','rate':44100,'sbcMaxBitpool':35 if i==2 else 64} for i,n in [(1,'Phone'),(2,'Mac'),(3,'Headphones')]],
+'revision':0,'slots':{'inputs':['AA:AA:AA:AA:AA:01','AA:AA:AA:AA:AA:02'],'outputs':['AA:AA:AA:AA:AA:03','AA:AA:AA:AA:AA:04']},
+'devices':[{'addr':f'AA:AA:AA:AA:AA:0{i}','name':n,'kind':'source' if i<3 else 'output','caps':['sends_audio' if i<3 else 'plays_audio'],'icon':'phone' if i<3 else 'audio-headphones','connected':True,'paired':True,'role':['in1','in2','out1'][i-1],'backend':'bluealsa' if i==2 else 'pipewire','volumeKnown':True,'volume':70,'codec':'SBC','rate':44100,'sbcMaxBitpool':35 if i==2 else 64} for i,n in [(1,'Phone'),(2,'Mac'),(3,'Headphones')]]+[{'addr':'AA:AA:AA:AA:AA:04','name':'Speaker','kind':'output','caps':['plays_audio'],'icon':'audio-card','connected':True,'paired':True,'role':'out2','backend':'pipewire','volumeKnown':True,'volume':70,'codec':'SBC','rate':44100},{'addr':'AA:AA:AA:AA:AA:09','name':'WH-1000XM3','kind':'output','caps':['plays_audio'],'icon':'audio-headset','connected':False,'paired':False,'trusted':True,'role':'','rssi':-64},{'addr':'AA:AA:AA:AA:AA:08','name':'Desk Speaker','kind':'output','caps':['plays_audio'],'icon':'audio-card','connected':False,'paired':True,'trusted':True,'role':'','rssi':-70}],
 'mixer':{'gains':[0,0],'mutes':[False,False],'placement':['stereo','stereo'],'master':0,'masterMute':False,'headroomDb':-6,'limiter':False},
 'audio':{'preset':'balanced','preferredRate':48000,'allowedRates':[44100,48000],'quantum':2048,'bluealsaPeriodUs':100000,'bluealsaBufferUs':500000,'resampler':'auto','codecPolicy':'compatibility','liveMeters':False,'secondarySbcMaxBitpool':35,'secondaryAdvertisedDelayMs':0},
 'wifi':{'ssid':'Test-5G','band':'5 GHz','freq':5180},
@@ -122,6 +122,48 @@ class BrowserRegression(unittest.TestCase):
   # The affected input must always be named, and the primary marked unsupported.
   self.assertIn('Input 2',card.inner_text())
   self.assertIn('Input 1 runs on PipeWire',card.inner_text())
+ def test_devices_are_grouped_by_setup_state(self):
+  # Paired and freshly discovered devices used to share one grid, which made an
+  # already-set-up device indistinguishable from a new find.
+  self.route('Devices')
+  heads=self.page.locator('.device-grid').count()
+  self.assertGreaterEqual(heads,2,'expected more than one device group')
+  text=self.page.locator('.page').inner_text()
+  self.assertIn('ASSIGNED',text.upper())
+  self.assertIn('PAIRED, NOT ASSIGNED',text.upper())
+  self.assertIn('DISCOVERED, NOT PAIRED',text.upper())
+  # A discovered device must still show a real type, not just an address.
+  self.assertIn('WH-1000XM3',text)
+  self.assertIn('PLAYS AUDIO',text.upper())
+ def test_discovered_device_shows_type_and_icon(self):
+  self.route('Devices')
+  card=self.page.locator('.device-card', has_text='WH-1000XM3')
+  self.assertIn('PLAYS AUDIO', card.inner_text().upper())
+  self.assertIn('Not paired', card.inner_text())
+  self.assertEqual(card.locator('.device-icon svg').count(),1)
+  self.assertFalse(card.locator('select').is_enabled(),'an unpaired device must not be assignable')
+ def test_output_2_can_be_assigned(self):
+  self.route('Devices')
+  # the discovered device must not be assignable until it is paired
+  found=self.page.locator('.device-card', has_text='WH-1000XM3').locator('select')
+  self.assertFalse(found.is_enabled())
+  # a paired output device may be assigned to either output slot
+  sel=self.page.locator('select[data-role-addr="AA:AA:AA:AA:AA:03"]')
+  opts=' '.join(sel.locator('option').all_inner_texts())
+  self.assertIn('Output 1',opts)
+  self.assertIn('Output 2',opts)
+  # assigning a second output must actually be accepted
+  sel.select_option('out2')
+  self.page.wait_for_timeout(300)
+  writes=self.page.evaluate('window.__server.writes')
+  self.assertEqual(writes[-1][0],'/api/bluetooth/role')
+  self.assertEqual(writes[-1][1]['role'],'out2')
+ def test_dashboard_shows_both_output_slots(self):
+  text=self.page.locator('.dashboard .output-column').inner_text()
+  self.assertIn('OUTPUT 1',text.upper())
+  self.assertIn('OUTPUT 2',text.upper())
+  self.assertNotIn('Later version',text)
+  self.assertEqual(self.page.locator('.connector-svg.out').count(),1)
  def test_receiver_details_and_mobile_layout(self):
   self.page.locator('.receiver-details').nth(1).locator('summary').click();self.emit()
   self.assertTrue(self.page.locator('.receiver-details').nth(1).evaluate('e=>e.open'))

@@ -20,6 +20,15 @@ import (
 
 const pbkdf2Iterations = 210000
 
+// maxInputs and maxOutputs bound the routing model. Two inputs are the engine's
+// hard limit (one A2DP sink SEP each from PipeWire and BlueALSA). Two outputs are
+// supported by fanning the mix out through a combine sink; the model is a list so
+// adding a third would not need new plumbing, only another SEP.
+const (
+	maxInputs  = 2
+	maxOutputs = 2
+)
+
 func defaultConfig() Config {
 	u, _ := user.Current()
 	uid := os.Getuid()
@@ -35,7 +44,7 @@ func defaultConfig() Config {
 		AudioUser:     username,
 		AudioUID:      uid,
 		BluetoothName: "OpenAudioHub",
-		Slots:         SlotsConfig{Inputs: []string{"", ""}, Outputs: []string{""}},
+		Slots:         SlotsConfig{Inputs: make([]string, maxInputs), Outputs: make([]string, maxOutputs)},
 		Mixer:         MixerConfig{Gains: []float64{0, 0}, Mutes: []bool{false, false}, Placement: []string{"stereo", "stereo"}, Master: 0, HeadroomDB: -6, Limiter: false},
 		Audio:         AudioConfig{SecondarySBCMaxBitpool: 35, Preset: "balanced", PreferredRate: 48000, AllowedRates: []int{44100, 48000}, Quantum: 2048, BlueALSAPeriodUS: 100000, BlueALSABufferUS: 500000, Resampler: "auto", CodecPolicy: "compatibility", LiveMeters: false},
 		DevicePrefs:   map[string]DevicePrefs{},
@@ -94,6 +103,12 @@ func normalizeConfig(c *Config) {
 	}
 	if len(c.Slots.Outputs) < 1 {
 		c.Slots.Outputs = []string{""}
+	}
+	// Older configurations carry a single output slot; pad to the supported
+	// count so existing installs gain Output 2 without a migration step. Never
+	// truncate: a slot holding an address is user data.
+	for len(c.Slots.Outputs) < maxOutputs {
+		c.Slots.Outputs = append(c.Slots.Outputs, "")
 	}
 	if len(c.Mixer.Gains) < len(c.Slots.Inputs) {
 		c.Mixer.Gains = append(c.Mixer.Gains, make([]float64, len(c.Slots.Inputs)-len(c.Mixer.Gains))...)

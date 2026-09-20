@@ -30,13 +30,20 @@ type App struct {
 	networkApply *NetworkApply
 	wifiNetworks []WiFiNetwork
 
-	audioConfigMu   sync.Mutex
-	mixerApplyMu    sync.Mutex
-	reconcileMu     sync.Mutex
+	audioConfigMu sync.Mutex
+	mixerApplyMu  sync.Mutex
+	reconcileMu   sync.Mutex
+	// Guards the multi-output fan-out state below; only reconcileRoutes writes it.
+	outputRouteMu   sync.Mutex
+	combineModule   string
+	combineSlaves   string
 	btOpsMu         sync.Mutex
 	deviceNamesMu   sync.Mutex
 	deviceNames     map[string]string
 	deviceNamesPath string
+	// Bounded cache of BlueZ device detail for unpaired, discovered devices.
+	deviceInfoMu    sync.Mutex
+	deviceInfo      map[string]deviceInfoEntry
 	stateBuildMu    sync.Mutex
 	stateCacheMu    sync.RWMutex
 	stateCache      State
@@ -61,7 +68,7 @@ func NewApp(configPath, version string) (*App, error) {
 		return nil, err
 	}
 	namePath := deviceNameCachePath(configPath)
-	a := &App{cfg: cfg, run: runner{}, version: version, listen: cfg.Get().Listen, deviceNames: loadDeviceNameCache(namePath), deviceNamesPath: namePath, sse: map[chan []byte]struct{}{}, refresh: make(chan struct{}, 1), reconcileReq: make(chan string, 1)}
+	a := &App{cfg: cfg, run: runner{}, version: version, listen: cfg.Get().Listen, deviceNames: loadDeviceNameCache(namePath), deviceNamesPath: namePath, deviceInfo: map[string]deviceInfoEntry{}, sse: map[chan []byte]struct{}{}, refresh: make(chan struct{}, 1), reconcileReq: make(chan string, 1)}
 	return a, nil
 }
 func (a *App) SetListen(s string) { a.listen = s }

@@ -167,7 +167,7 @@ func (a *App) setRole(addr, role string) error {
 			if !contains(d.Caps, "sends_audio") {
 				return fmtErr("this device does not advertise Bluetooth audio output capability")
 			}
-		case "out1":
+		case "out1", "out2":
 			if !contains(d.Caps, "plays_audio") {
 				return fmtErr("this device does not advertise Bluetooth audio playback capability")
 			}
@@ -194,8 +194,12 @@ func (a *App) setRole(addr, role string) error {
 				return fmtErr("invalid input role")
 			}
 			c.Slots.Inputs[idx] = addr
-		case "out1":
-			c.Slots.Outputs[0] = addr
+		case "out1", "out2":
+			idx := atoiLoose(strings.TrimPrefix(role, "out")) - 1
+			if idx < 0 || idx >= len(c.Slots.Outputs) {
+				return fmtErr("invalid output role")
+			}
+			c.Slots.Outputs[idx] = addr
 		default:
 			return fmtErr("invalid role")
 		}
@@ -251,9 +255,17 @@ func (a *App) reconcileRoutes(reason string) {
 			assignedInputs[strings.ToUpper(raw)] = true
 		}
 	}
-	assignedOutput := ""
-	if len(c.Slots.Outputs) > 0 {
-		assignedOutput = strings.ToUpper(c.Slots.Outputs[0])
+	assignedOutputs := map[string]bool{}
+	outputOrder := make([]string, 0, len(c.Slots.Outputs))
+	for _, raw := range c.Slots.Outputs {
+		if raw == "" {
+			continue
+		}
+		addr := strings.ToUpper(raw)
+		if !assignedOutputs[addr] {
+			assignedOutputs[addr] = true
+			outputOrder = append(outputOrder, addr)
+		}
 	}
 	for _, t := range transports {
 		addr := strings.ToUpper(t.Addr)
@@ -263,7 +275,7 @@ func (a *App) reconcileRoutes(reason string) {
 			_, _ = a.run.Run(6*time.Second, "bluetoothctl", "disconnect", addr)
 			delete(connected, addr)
 			delete(inputMedia, addr)
-		case strings.Contains(t.UUID, "Audio Source") && addr != "" && addr != assignedOutput:
+		case strings.Contains(t.UUID, "Audio Source") && addr != "" && !assignedOutputs[addr]:
 			a.logf("disconnecting unassigned A2DP output %s", addr)
 			_, _ = a.run.Run(6*time.Second, "bluetoothctl", "disconnect", addr)
 			delete(connected, addr)
@@ -271,24 +283,26 @@ func (a *App) reconcileRoutes(reason string) {
 		}
 	}
 
-	// Keep the selected output as PipeWire's default target. Only initiate a
-	// connection when Auto is enabled; manual Connect bypasses this policy.
-	if len(c.Slots.Outputs) > 0 && c.Slots.Outputs[0] != "" {
-		addr := strings.ToUpper(c.Slots.Outputs[0])
+	// Keep every assigned output connected and audible. Only initiate a connection
+	// when Auto is enabled; manual Connect bypasses this policy.
+	for _, addr := range outputOrder {
 		if outputMedia[addr] {
-			a.setDefaultOutput(addr)
-		} else if a.autoConnectFor(addr) {
-			// Even if the generic Bluetooth ACL is already connected, explicitly
-			// request A2DP when its media transport is missing.
-			if _, err := a.run.Run(12*time.Second, "bluetoothctl", "connect", addr, "a2dp-sink"); err != nil {
-				a.logf("auto-connect output %s: %v", addr, err)
-			} else {
-				a.setDefaultOutput(addr)
-				connected[addr] = true
-				outputMedia[addr] = true
-			}
+			continue
+		}
+		if !a.autoConnectFor(addr) {
+			continue
+		}
+		// Even if the generic Bluetooth ACL is already connected, explicitly request
+		// A2DP when its media transport is missing.
+		if _, err := a.run.Run(12*time.Second, "bluetoothctl", "connect", addr, "a2dp-sink"); err != nil {
+			a.logf("auto-connect output %s: %v", addr, err)
+		} else {
+			connected[addr] = true
+			outputMedia[addr] = true
 		}
 	}
+	// Route after connecting, so both sink nodes exist before the fan-out is built.
+	a.ensureOutputRouting(outputOrder)
 
 	inputs := make([]string, 0, len(c.Slots.Inputs))
 	for _, raw := range c.Slots.Inputs {
@@ -388,16 +402,89 @@ func (a *App) routeSupervisor() {
 	}
 }
 
-func (a *App) setDefaultOutput(addr string) {
-	normalized := strings.ReplaceAll(strings.ToUpper(addr), ":", "_")
+// sinkNameFor resolves a Bluetooth device address to its current PipeWire sink
+// name, or "" when that device has no sink node in the graph yet.
+func (a *App) sinkNameFor(addr string) string {
+	normalized := strings.ReplaceAll(strings.ToUpper(cleanAddr(addr)), ":", "_")
+	if normalized == "" {
+		return ""
+	}
 	out, _ := a.userPactl("list", "short", "sinks")
 	for _, l := range strings.Split(out, "\n") {
 		fs := strings.Fields(l)
 		if len(fs) > 1 && strings.Contains(strings.ToUpper(fs[1]), normalized) {
-			_, _ = a.userPactl("set-default-sink", fs[1])
-			return
+			return fs[1]
 		}
 	}
+	return ""
+}
+
+func (a *App) setDefaultOutput(addr string) {
+	if name := a.sinkNameFor(addr); name != "" {
+		_, _ = a.userPactl("set-default-sink", name)
+	}
+}
+
+// combineSinkName is the virtual sink used to feed two outputs at once.
+const combineSinkName = "openaudiohub_multi"
+
+// ensureOutputRouting makes the mix reach every assigned output.
+//
+// One output behaves exactly as before: that device's sink becomes the default.
+// Two outputs need an explicit fan-out, because WirePlumber only routes a stream
+// to one default sink; a combine sink is created with both as slaves. The module
+// is only reloaded when the participating sinks actually change, so the 45s
+// reconcile loop does not interrupt audio.
+func (a *App) ensureOutputRouting(addrs []string) {
+	a.outputRouteMu.Lock()
+	defer a.outputRouteMu.Unlock()
+
+	sinks := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		if name := a.sinkNameFor(addr); name != "" {
+			sinks = append(sinks, name)
+		}
+	}
+
+	// Fewer than two usable sinks: no fan-out. This is the original path.
+	if len(sinks) < 2 {
+		a.unloadCombineSinkLocked()
+		if len(sinks) == 1 {
+			_, _ = a.userPactl("set-default-sink", sinks[0])
+		}
+		return
+	}
+
+	want := strings.Join(sinks, ",")
+	if a.combineModule != "" && a.combineSlaves == want {
+		// Already correct. Re-assert the default in case another client moved it.
+		_, _ = a.userPactl("set-default-sink", combineSinkName)
+		return
+	}
+	if a.combineModule != "" {
+		a.unloadCombineSinkLocked()
+	}
+	out, err := a.userPactl("load-module", "module-combine-sink", "sink_name="+combineSinkName, "slaves="+want)
+	if err != nil {
+		// Never leave the appliance silent: fall back to the first output.
+		a.logf("multi-output fan-out failed (%v); using %s only", err, sinks[0])
+		_, _ = a.userPactl("set-default-sink", sinks[0])
+		return
+	}
+	a.combineModule = strings.TrimSpace(out)
+	a.combineSlaves = want
+	_, _ = a.userPactl("set-default-sink", combineSinkName)
+	a.logf("multi-output fan-out active: %s -> %s", combineSinkName, want)
+}
+
+func (a *App) unloadCombineSinkLocked() {
+	if a.combineModule == "" {
+		return
+	}
+	_, _ = a.userPactl("unload-module", a.combineModule)
+	a.logf("multi-output fan-out removed")
+	a.combineModule = ""
+	a.combineSlaves = ""
 }
 
 func (a *App) applyMixer() {

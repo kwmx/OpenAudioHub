@@ -233,9 +233,10 @@ func (a *App) handleBTRole(w http.ResponseWriter, r *http.Request) {
 		if len(before.Slots.Inputs) > 1 {
 			oldOccupant = before.Slots.Inputs[1]
 		}
-	case "out1":
-		if len(before.Slots.Outputs) > 0 {
-			oldOccupant = before.Slots.Outputs[0]
+	case "out1", "out2":
+		idx := atoiLoose(strings.TrimPrefix(q.Role, "out")) - 1
+		if idx >= 0 && idx < len(before.Slots.Outputs) {
+			oldOccupant = before.Slots.Outputs[idx]
 		}
 	}
 
