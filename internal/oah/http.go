@@ -197,6 +197,12 @@ func (a *App) handleBTAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.btAction(q.Addr, q.Action); err != nil {
+		// Actionable validation must reach the user; only internal failures are
+		// replaced by a generic message with a reference for the journal.
+		if isUserErr(err) {
+			writeJSON(w, 409, map[string]string{"error": err.Error()})
+			return
+		}
 		msg := "Bluetooth did not complete that action. Try again, or check Diagnostics."
 		if q.Action == "forget" {
 			msg = "The device was unassigned but not removed. Try Forget again."

@@ -3,6 +3,7 @@ package oah
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -35,4 +36,21 @@ func (runner) Start(name string, args ...string) error {
 	}
 	go func() { _ = cmd.Wait() }()
 	return nil
+}
+
+// userErr marks an error whose text is safe and useful to show the user. Handlers
+// that otherwise replace internal failures with a generic message must let these
+// through, or actionable validation like "assign this device to an output first"
+// is hidden behind "The hub could not complete that action".
+type userErr struct{ msg string }
+
+func (e *userErr) Error() string { return e.msg }
+
+func userErrorf(format string, args ...any) error {
+	return &userErr{msg: fmt.Sprintf(format, args...)}
+}
+
+func isUserErr(err error) bool {
+	var ue *userErr
+	return errors.As(err, &ue)
 }

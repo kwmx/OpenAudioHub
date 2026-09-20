@@ -594,7 +594,7 @@ func (a *App) btAction(addr, action string) error {
 		// without storing a bond, and trusting an unbonded device is what produced the
 		// "Paired: no / Trusted: yes" state that kept the UI asking to pair.
 		if d := a.bluetoothInfo(addr, ""); !d.Paired {
-			return fmtErr("the device did not complete pairing — put it in pairing mode and try again")
+			return userErrorf("the device did not complete pairing — put it in pairing mode and try again")
 		}
 		// Audio reconnects should not block on authorization prompts after pairing.
 		_, _ = a.run.Run(5*time.Second, "bluetoothctl", "trust", addr)
@@ -608,13 +608,13 @@ func (a *App) btAction(addr, action string) error {
 			caps := a.bluetoothInfo(addr, "").Caps
 			switch {
 			case contains(caps, "sends_audio") && contains(caps, "plays_audio"):
-				return fmtErr("assign this device to an input or an output before connecting it")
+				return userErrorf("assign this device to an input or an output before connecting it")
 			case contains(caps, "sends_audio"):
-				return fmtErr("assign this device to Input 1 or Input 2 before connecting it")
+				return userErrorf("assign this device to Input 1 or Input 2 before connecting it")
 			case contains(caps, "plays_audio"):
-				return fmtErr("assign this device to an output before connecting it")
+				return userErrorf("assign this device to an output before connecting it")
 			default:
-				return fmtErr("assign this device to a slot before connecting it")
+				return userErrorf("assign this device to a slot before connecting it")
 			}
 		}
 		args := []string{"connect", addr}
@@ -629,7 +629,7 @@ func (a *App) btAction(addr, action string) error {
 				}
 			}
 			if occupied >= 2 {
-				return fmtErr("both Bluetooth input endpoints are already occupied")
+				return userErrorf("both Bluetooth input endpoints are already occupied")
 			}
 			args = append(args, "a2dp-source")
 		} else if strings.HasPrefix(role, "out") {
