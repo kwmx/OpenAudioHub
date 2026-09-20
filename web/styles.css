@@ -22,7 +22,11 @@
 
 /* Dashboard rail: preserve the original approved node/mixer/node visual language. */
 .legacy-rail{align-items:stretch}
-.legacy-rail .input-column,.legacy-rail .output-column{justify-content:flex-start}
+.legacy-rail .input-column{justify-content:flex-start}
+/* The single output is centred so it lines up with the mixer, which turns the
+   mixer->output connector into a clean straight line instead of a swoop. Inputs
+   stay top-aligned because the merge curves depend on the two card positions. */
+.legacy-rail .output-column{justify-content:center}
 .node-card{display:flex;flex-direction:column;gap:12px;min-height:224px}
 .node-card.empty-slot{min-height:224px}
 .node-meta,.node-latency{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--text-muted);font-size:11px}
