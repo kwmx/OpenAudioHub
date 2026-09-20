@@ -141,6 +141,7 @@ func (a *App) cachedState() (State, bool) {
 	st := a.stateCache
 	c := a.cfg.Get()
 	st.Revision, st.Audio, st.Mixer, st.Slots = c.Revision, c.Audio, c.Mixer, c.Slots
+	st.DelayReport = reconcileDelayReport(st.DelayReport, c.Audio.SecondaryAdvertisedDelayMS, st.DelayReport.Capable)
 	return st, a.stateCacheValid
 }
 

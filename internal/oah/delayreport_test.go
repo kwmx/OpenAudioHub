@@ -304,6 +304,50 @@ func TestDelayReachesAudioProjection(t *testing.T) {
 
 // A shared receiver binary is the capability source for every call; make sure a
 // stale cache entry cannot report a different binary's capability.
+// The device exposed this: a cached report could be served next to a different
+// configured value, so one response contradicted itself (audio 150 ms, report 0).
+func TestCachedStateKeepsDelayReportConsistentWithConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	c := defaultConfig()
+	if err := saveConfig(path, c); err != nil {
+		t.Fatal(err)
+	}
+	a, err := NewApp(path, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Cache a verdict for the old value, then change the configuration.
+	a.cacheState(State{Audio: c.Audio, DelayReport: DelayReport{RequestedMS: 0, State: delayDefault, Input: "Input 2 (BlueALSA receiver)"}})
+	if err := a.cfg.Update(func(c *Config) error { c.Audio.SecondaryAdvertisedDelayMS = 150; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	st, ok := a.cachedState()
+	if !ok {
+		t.Fatal("expected a cached state")
+	}
+	if st.Audio.SecondaryAdvertisedDelayMS != 150 {
+		t.Fatalf("audio block says %d", st.Audio.SecondaryAdvertisedDelayMS)
+	}
+	if st.DelayReport.RequestedMS != st.Audio.SecondaryAdvertisedDelayMS {
+		t.Fatalf("report %d contradicts audio %d in one response", st.DelayReport.RequestedMS, st.Audio.SecondaryAdvertisedDelayMS)
+	}
+	// A stale verdict must not survive; an unconfirmed value is pending.
+	if st.DelayReport.State != delayPending {
+		t.Fatalf("state %q", st.DelayReport.State)
+	}
+	if st.DelayReport.ActualKnown || st.DelayReport.Attempt != "" || st.DelayReport.ActualMS != 0 {
+		t.Fatalf("stale evidence leaked: %#v", st.DelayReport)
+	}
+	// Returning to zero is the engine default, not a pending report.
+	if err := a.cfg.Update(func(c *Config) error { c.Audio.SecondaryAdvertisedDelayMS = 0; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = a.cachedState()
+	if st.DelayReport.State != delayDefault || st.DelayReport.RequestedMS != 0 {
+		t.Fatalf("reset state %q requested %d", st.DelayReport.State, st.DelayReport.RequestedMS)
+	}
+}
+
 func TestReceiverCapabilityTracksTheFile(t *testing.T) {
 	dir := t.TempDir()
 	withPatch := filepath.Join(dir, "with")

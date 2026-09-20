@@ -135,6 +135,34 @@ func readDelayAttempt() *delayAttempt {
 	return at
 }
 
+// reconcileDelayReport keeps a cached report consistent with the configured value.
+//
+// A cached report may predate the most recent apply, so serving its verdict next to
+// a different configured value in the same response would contradict itself: the
+// audio block would say 150 ms while the report still described 0. The verdict is
+// withheld until the next full rebuild rather than guessed.
+func reconcileDelayReport(rep DelayReport, requested int, capable bool) DelayReport {
+	if rep.RequestedMS == requested {
+		return rep
+	}
+	out := DelayReport{
+		RequestedMS: requested,
+		Input:       rep.Input,
+		Addr:        rep.Addr,
+		Capable:     capable,
+		State:       delayPending,
+		Detail:      "Waiting for the receiver to confirm the new value.",
+	}
+	if out.Input == "" {
+		out.Input = "Input 2 (BlueALSA receiver)"
+	}
+	if requested == 0 {
+		out.State = delayDefault
+		out.Detail = "Engine default. Nothing is reported to the source."
+	}
+	return out
+}
+
 // delayReport derives the state shown for the secondary input. transports must be
 // the list already gathered for this state build so no extra bluetoothctl calls
 // are made on a 1 GB board.
