@@ -1,6 +1,6 @@
 go test ./...
 ?   	github.com/openaudiohub/openaudiohub/cmd/openaudiohubd	[no test files]
-ok  	github.com/openaudiohub/openaudiohub/internal/oah	0.786s
+ok  	github.com/openaudiohub/openaudiohub/internal/oah	(cached)
 mkdir -p release
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=0.1.17" -o release/openaudiohubd-linux-arm64 ./cmd/openaudiohubd
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=0.1.17" -o release/openaudiohubd-linux-amd64 ./cmd/openaudiohubd
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=1.0.0" -o release/openaudiohubd-linux-arm64 ./cmd/openaudiohubd
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=1.0.0" -o release/openaudiohubd-linux-amd64 ./cmd/openaudiohubd

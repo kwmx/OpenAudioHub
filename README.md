@@ -3,10 +3,10 @@
 A headless Bluetooth audio mixer and control panel for small single-board
 computers. Connect **two** Bluetooth sources at once, mix them with independent
 gain and ear placement, and send the result to **one** Bluetooth headset or
-speaker — all controlled from a local web page, with no cloud dependency.
+speaker, all controlled from a local web page, with no cloud dependency.
 
 Reference target: **Orange Pi Zero 2W** running Armbian / Debian Trixie.
-Current version: **0.1.17** (integration candidate — see [Status](#status)).
+Current version: **1.0.0**. See [Status](#status) for what is verified on hardware.
 
 ## What it does
 
@@ -17,7 +17,7 @@ Current version: **0.1.17** (integration candidate — see [Status](#status)).
 - Keeps **Bluetooth device volume** and **internal mixer gain** as two separate,
   clearly labelled controls.
 - Bluetooth pairing, auto-connect, Wi-Fi and hub identity managed from the browser.
-- Live state over Server-Sent Events — no polling and no page reloads, and open
+- Live state over Server-Sent Events: no polling and no page reloads, and open
   controls are never reset by incoming telemetry.
 - Single shared password; the whole interface is served from the device itself.
 
@@ -51,7 +51,7 @@ fault. Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 - A normal login user to own the PipeWire session. The installer picks the first
   regular user automatically, or you can set `OPENAUDIOHUB_USER`.
 
-**Software** — installed automatically: BlueZ, PipeWire with WirePlumber, the
+**Software**, installed automatically: BlueZ, PipeWire with WirePlumber, the
 BlueALSA utilities, Python 3 with the PyYAML/D-Bus/GObject bindings, `iw`,
 Netplan, Avahi and RTKit. The Go daemon ships prebuilt for `arm64` and `amd64`, so
 Go is not needed on the target; the isolated BlueALSA receiver is compiled on the
@@ -101,7 +101,7 @@ Open **http://openaudiohub.local/** (or `http://<hub-ip>/`) and sign in.
 
 Adding a **source** and adding an **output** run Bluetooth pairing in opposite
 directions, which is why the Devices screen offers both **Start pairing** and
-**Scan**. Only sources need pairing mode — outputs are added by scanning.
+**Scan**. Only sources need pairing mode. Outputs are added by scanning.
 
 ### Add a source: phone, computer, tablet
 
@@ -117,7 +117,7 @@ advertised as discoverable first.
 ### Add an output: headset, speaker
 
 The hub is the side that connects here, so you discover the device instead of
-advertising the hub. **Pairing mode is not needed** — leave it off.
+advertising the hub. **Pairing mode is not needed**, so leave it off.
 
 1. Put the headset or speaker into *its own* pairing mode.
 2. **Devices → Scan.** The device appears in the list as it is discovered.
@@ -158,10 +158,10 @@ They are intentionally independent: changing one does not rewrite the other.
 Editing any value switches the preset to **Custom**. Applying settings restarts
 the audio graph and briefly interrupts playback.
 
-### Secondary receiver (SBC maximum)
+### BlueALSA receiver (SBC maximum)
 
 The SBC maximum bitpool can be **35**, **53**, **64** or **250**. It applies to the
-**BlueALSA receiver only** (Input 2) — it is not a separate cap on both inputs —
+**BlueALSA receiver only** (Input 2). It is not a separate cap on both inputs,
 and the source must reconnect before a new value takes effect. The default of 35
 is a compatibility trade-off. One binary handles every value, so changing it does
 not recompile anything and does not restart the primary input.
@@ -169,13 +169,13 @@ not recompile anything and does not restart the primary input.
 ### Experimental A/V delay report
 
 *Advertised total sink delay* (0–2000 ms) asks the secondary receiver to report a
-fixed **total** rendering delay to its source. It applies to **Input 2 only** — the
+fixed **total** rendering delay to its source. It applies to **Input 2 only**, the
 BlueALSA receiver. **Input 1 runs on PipeWire, whose owning process exposes no
 supported way to write this value, so Input 1 is unsupported and unaffected.**
 
 **Zero keeps the engine default** and reports nothing. The number is the total
 latency from source to ears, **not** extra buffering, and there is deliberately no
-separate offset control — a residual error belongs inside this total, not added on
+separate offset control, a residual error belongs inside this total, not added on
 top of it. Headphone or output latency you measured is already part of the total.
 
 The card reports what was actually observed rather than what was saved. Saving a
@@ -192,7 +192,7 @@ value or restarting a service is never shown as success:
 
 **Apply to receiver** changes only this value without restarting the audio graph.
 **Reset to 0** returns to the engine default. BlueZ accepting a report is not proof
-that the source corrected its video — only re-measuring shows that. The on-device
+that the source corrected its video. Only re-measuring shows that. The on-device
 calibration test is in [`docs/SETUP.md`](docs/SETUP.md).
 
 ## Files and permissions
@@ -217,10 +217,10 @@ the previous Netplan configuration is restored automatically. Reconnect and pres
 
 ## Backup, restore and removal
 
-- **Backup** — System → *Download configuration backup*: a zip containing
+- **Backup**: System → *Download configuration backup*: a zip containing
   `config.json`, `audio.json` and `wireplumber.conf`.
-- **Restore** — uploads `config.json` and `audio.json` from a backup.
-- **Uninstall** — `sudo bash scripts/uninstall.sh` removes the services and
+- **Restore**: uploads `config.json` and `audio.json` from a backup.
+- **Uninstall**: `sudo bash scripts/uninstall.sh` removes the services and
   binaries; configuration and Bluetooth pairings are preserved.
 
 ## Troubleshooting
@@ -270,14 +270,16 @@ units and the BlueALSA patch live under `scripts/`, `packaging/` and `patches/`.
 
 ## Status
 
-0.1.17 is an integration candidate. The host-side test suite passes, but
-on-device acceptance on real hardware is still required. [`VALIDATION.md`](VALIDATION.md)
-lists exactly which checks passed and which remain open; [`docs/SETUP.md`](docs/SETUP.md)
-has the on-device acceptance checklist.
+The host-side test suite passes, and the core audio path has been exercised on
+real hardware: install and upgrade, Bluetooth pairing, output switching, and the
+A/V rendering-delay report. Some integration is unverified — more than two
+simultaneous sources, dual Bluetooth outputs, and the update install path.
+[`VALIDATION.md`](VALIDATION.md) records which checks were run and which remain
+open; [`docs/SETUP.md`](docs/SETUP.md) has the on-device acceptance checklist.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE). The isolated receiver binary is built from
+MIT. See [`LICENSE`](LICENSE). The isolated receiver binary is built from
 MIT-licensed [bluez-alsa](https://github.com/arkq/bluez-alsa); its upstream notice
 is installed alongside the binary. See [`docs/RECEIVER.md`](docs/RECEIVER.md) for
 source provenance and reproduction steps.

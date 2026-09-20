@@ -1,6 +1,6 @@
-# Setup / upgrade — OpenAudioHub 0.1.17
+# Setup and upgrade: OpenAudioHub 1.0.0
 
-This is an integration candidate, not a hardware-qualified appliance image.
+This is not a hardware-qualified appliance image.
 Read `VALIDATION.md` and complete the acceptance checks below before relying on
 it. Keep any existing working setup until the cold-boot and playback checks pass.
 
@@ -9,9 +9,9 @@ it. Keep any existing working setup until the cold-boot and playback checks pass
 Use a **new folder** rather than mixing files from previous versions:
 
 ```bash
-mkdir -p ~/openaudiohub-upgrades/0.1.17
-unzip OpenAudioHub-0.1.17.zip -d ~/openaudiohub-upgrades/0.1.17
-cd ~/openaudiohub-upgrades/0.1.17/OpenAudioHub
+mkdir -p ~/openaudiohub-upgrades/1.0.0
+unzip OpenAudioHub-1.0.0.zip -d ~/openaudiohub-upgrades/1.0.0
+cd ~/openaudiohub-upgrades/1.0.0/OpenAudioHub
 ```
 
 The ZIP contains the full source, scripts, frontend, test report, and ARM64/AMD64
@@ -77,7 +77,7 @@ systemctl --user status openaudiohub-bluealsa-aplay.service --no-pager
 sudo stat -c '%a %U:%G %n' /etc/openaudiohub/{config,audio}.json
 ```
 
-Expected daemon version: `0.1.17`. The legacy **user** `bluealsa-aplay` service
+Expected daemon version: `1.0.0`. The legacy **user** `bluealsa-aplay` service
 should be absent/inactive. The managed player may wait for an assigned receiver.
 `config.json` must stay `600 root:root`; `audio.json` is the non-secret `644`
 projection used by the unprivileged bridge. Do not chmod the private file to 644.
@@ -120,7 +120,7 @@ A disconnected Mac has no PCM object, so that query cannot succeed then.
 
 ## 5. A/V synchronization (experimental)
 
-This control applies to **Input 2 only** — the BlueALSA receiver. Input 1 runs on
+This control applies to **Input 2 only**, the BlueALSA receiver. Input 1 runs on
 PipeWire, whose owning process exposes no supported way for OpenAudioHub to write
 this value, so Input 1 is **unsupported** and is not affected by this setting.
 
@@ -133,7 +133,7 @@ The number is the **total reported latency from source to ears**, not an extra
 amount of audio to buffer. A residual lip-sync error is added into this total, not
 aplied on top of it; there is deliberately no separate offset control, because two
 stacked numbers is exactly how a total gets double-counted. Latency you measured
-from the headphones is already part of the total — do not add it again.
+from the headphones is already part of the total. Do not add it again.
 
 ### Reading the status
 
@@ -174,12 +174,12 @@ Run this on the appliance with the real source, video player and headphones.
 3. Reconnect the source (or wait for the reconcile loop). Confirm the status
    becomes **Reported** and that *Transport reports* equals the requested value.
    If it stays **Pending confirmation** with "not exposed by BlueZ", this source
-   does not expose a readable delay — record that finding rather than assuming
+   does not expose a readable delay, record that finding rather than assuming
    success. If it shows **Rejected**, capture the attempt detail from the card and
    the receiver journal.
 4. Re-measure the same clip with the same setup. **Pass:** the offset moves toward
    zero by roughly the reported amount and is stable across two attempts.
-   **Inconclusive:** the offset is unchanged — the source ignored the report.
+   **Inconclusive:** the offset is unchanged, meaning the source ignored the report.
    This is a valid outcome to record; it is not a reason to raise the number.
 5. Press **Reset to 0**, confirm the card returns to **Engine default**, and
    confirm the audio still plays. Then repeat step 3 once after a full reboot.

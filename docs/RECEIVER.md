@@ -45,12 +45,12 @@ epoch=1726789012
 `packaging/scripts/bluealsa-daemon.sh` sets that path and exports the requested
 value; the write is best effort and never fails the daemon. The daemon merges the
 record with the **live** transport property (`internal/oah/delayreport.go`), so
-`reported` means the acquired transport currently exposes the requested total —
+`reported` means the acquired transport currently exposes the requested total,
 not merely that a write was attempted. A record for an older value is ignored.
 
 States surfaced to the UI: `default` (requested 0), `unsupported` (no patched
 receiver, or **the primary PipeWire input**, which has no supported owning-process
-mechanism for this property), `pending`, `reported`, `rejected`, `mismatch`.
+mechanism for this property), `pending`, `reported`, `rejected`, and `mismatch`.
 
 Neither a stored value nor an accepted write proves that a source application
 corrected its video. That can only be established by re-measuring; see the

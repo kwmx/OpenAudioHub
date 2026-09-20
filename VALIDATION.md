@@ -1,4 +1,4 @@
-# OpenAudioHub 0.1.17 — validation report
+# OpenAudioHub 1.0.0 validation report
 
 Scope: what has actually been executed for this release, and what still has to be
 proven on real hardware. Host-side checks passing is not the same as a
@@ -8,15 +8,15 @@ hardware-qualified appliance image.
 
 | Check | Result | Scope |
 |---|---|---|
-| `go test -v -timeout 60s ./...` | PASS — 47 tests | Regressions plus receiver bounds, config projection permissions/secrets, revision monotonicity, the delay-report state machine, Bluetooth connect backoff, input capacity, update version comparison and restore rejection |
+| `go test -v -timeout 60s ./...` | PASS: 47 tests | Regressions plus receiver bounds, config projection permissions/secrets, revision monotonicity, the delay-report state machine, Bluetooth connect backoff, input capacity, update version comparison and restore rejection |
 | `go vet ./...` | PASS | Go static checks, exit 0 |
 | `go test -race -timeout 90s ./...` | PASS | The available test suite, not a simulated physical appliance |
-| `python3 tests/test_runtime.py` | PASS — 8 tests | Runtime option validation, delay passthrough and bounds, daemon exports, secret/public read boundary using an unprivileged UID, legacy service migration checks and structural source-patch guards |
-| `python3 tests/test_receiver_compile.py` | PASS — 3 tests | Compiles the injected BlueALSA C against stubs with `-Wall -Wextra -Werror`; proves the injected block is valid C, not that it links or runs against real BlueALSA |
-| `python3 tests/browser_regression.py` | PASS — 14 tests | Headless Chromium, offline, mocked fetch/SSE; dropdown identity, real range drag, unsaved text/audio edits, stale revisions, ordered writes, volume separation, failed-save retry, mobile overflow, A/V delay apply/reset and status, device grouping, discovered-device type, safe buffer combinations |
+| `python3 tests/test_runtime.py` | PASS: 8 tests | Runtime option validation, delay passthrough and bounds, daemon exports, secret/public read boundary using an unprivileged UID, legacy service migration checks and structural source-patch guards |
+| `python3 tests/test_receiver_compile.py` | PASS: 3 tests | Compiles the injected BlueALSA C against stubs with `-Wall -Wextra -Werror`; proves the injected block is valid C, not that it links or runs against real BlueALSA |
+| `python3 tests/browser_regression.py` | PASS: 14 tests | Headless Chromium, offline, mocked fetch/SSE; dropdown identity, real range drag, unsaved text/audio edits, stale revisions, ordered writes, volume separation, failed-save retry, mobile overflow, A/V delay apply/reset and status, device grouping, discovered-device type, safe buffer combinations |
 | Bash / Python / JavaScript syntax | PASS | Output in `tests/artifacts/syntax.log` |
 | Linux ARM64 Go build | PASS | Cross-compiled; not executed on ARM in the packaging environment |
-| Linux AMD64 Go build | PASS | Executed with `--version`, reports `0.1.17` |
+| Linux AMD64 Go build | PASS | Executed with `--version`, reports `1.0.0` |
 
 Notes on the browser tests: they load the real UI code and CSS offline and inject
 controlled API/SSE responses, so they exercise the actual DOM controls and
@@ -27,8 +27,7 @@ rather than fetched.
 ## Verified on real hardware
 
 These were exercised on an Orange Pi Zero 2W running Armbian (Debian trixie,
-aarch64) with a real phone, computer and two headsets. They are the strongest
-claims in this document.
+aarch64) with a real phone, computer and two headsets.
 
 - **Install and upgrade.** `scripts/install.sh` completes; a redeploy with an
   unchanged receiver patch correctly skips the BlueALSA rebuild.
@@ -45,7 +44,7 @@ claims in this document.
   releases the first and switches; the transport holder moved between headsets.
 - **Bluetooth limits.** The engine registers one A2DP source endpoint, so exactly
   one Bluetooth output can be active at a time. Connecting a second output while
-  the first holds it produces `Unable to select SEP` — reported to the user rather
+  the first holds it produces `Unable to select SEP`, which is reported to the user rather
   than retried forever.
 - **SBC capacity.** Four local A2DP sink endpoints were observed (one from
   WirePlumber, three from BlueALSA), which is the basis for the input capacity.

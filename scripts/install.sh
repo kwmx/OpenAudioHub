@@ -6,7 +6,7 @@ if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="0.1.17"
+VERSION="1.0.0"
 exec 9>/run/lock/openaudiohub-install.lock
 flock -n 9 || { echo 'Another OpenAudioHub install is running.' >&2; exit 1; }
 
