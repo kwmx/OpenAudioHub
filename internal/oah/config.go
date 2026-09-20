@@ -20,13 +20,12 @@ import (
 
 const pbkdf2Iterations = 210000
 
-// maxInputs and maxOutputs bound the routing model. Two inputs are the engine's
-// hard limit (one A2DP sink SEP each from PipeWire and BlueALSA). Two outputs are
-// supported by fanning the mix out through a combine sink; the model is a list so
-// adding a third would not need new plumbing, only another SEP.
+// maxInputs is the engine's hard limit: one A2DP sink SEP each from PipeWire and
+// BlueALSA. maxOutputs is 1 because there is a single A2DP source SEP, so only one
+// Bluetooth output can ever be live.
 const (
 	maxInputs  = 2
-	maxOutputs = 2
+	maxOutputs = 1
 )
 
 func defaultConfig() Config {
@@ -104,24 +103,13 @@ func normalizeConfig(c *Config) {
 	if len(c.Slots.Outputs) < 1 {
 		c.Slots.Outputs = []string{""}
 	}
-	// Older configurations carry a single output slot; pad to the supported
-	// count so existing installs gain Output 2 without a migration step. Never
-	// truncate: a slot holding an address is user data.
+	// The engine exposes a single A2DP source endpoint, so exactly one output can be
+	// live. Keep only the first entry; a second slot could never play.
+	if len(c.Slots.Outputs) > maxOutputs {
+		c.Slots.Outputs = c.Slots.Outputs[:maxOutputs]
+	}
 	for len(c.Slots.Outputs) < maxOutputs {
 		c.Slots.Outputs = append(c.Slots.Outputs, "")
-	}
-	if c.Slots.ActiveOutput < 0 || c.Slots.ActiveOutput >= len(c.Slots.Outputs) {
-		c.Slots.ActiveOutput = 0
-	}
-	// If the selected slot is empty, fall back to the first assigned one so a
-	// switch never leaves the mix unrouted.
-	if strings.TrimSpace(c.Slots.Outputs[c.Slots.ActiveOutput]) == "" {
-		for i, o := range c.Slots.Outputs {
-			if strings.TrimSpace(o) != "" {
-				c.Slots.ActiveOutput = i
-				break
-			}
-		}
 	}
 	if len(c.Mixer.Gains) < len(c.Slots.Inputs) {
 		c.Mixer.Gains = append(c.Mixer.Gains, make([]float64, len(c.Slots.Inputs)-len(c.Mixer.Gains))...)

@@ -27,7 +27,7 @@ const routes = ['Dashboard', 'Devices', 'Network', 'Audio', 'System', 'Diagnosti
 const esc = (s='') => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const attr = esc;
 const fmtRate = r => r ? `${(r/1000).toFixed(r % 1000 ? 1 : 0)} kHz` : '—';
-const roleLabel = r => ({in1:'Input 1',in2:'Input 2',out1:'Output 1',out2:'Output 2'}[r] || 'Unassigned');
+const roleLabel = r => ({in1:'Input 1',in2:'Input 2',out1:'Output'}[r] || 'Unassigned');
 const asArray = v => Array.isArray(v) ? v : [];
 const asObject = v => v && typeof v === 'object' && !Array.isArray(v) ? v : {};
 const finite = (v, fallback=0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
@@ -51,7 +51,7 @@ function normalizeDelay(raw={}){
 function normalizeState(raw={}) {
   const x = asObject(raw), slots = asObject(x.slots), mixer = asObject(x.mixer), wifi = asObject(x.wifi), audio = asObject(x.audio), system = asObject(x.system), health = asObject(x.health), pairing = asObject(x.pairing);
   const inputs = asArray(slots.inputs).slice(0,2).map(v=>String(v||'')); while(inputs.length<2) inputs.push('');
-  const outputs = asArray(slots.outputs).slice(0,2).map(v=>String(v||'')); while(outputs.length<2) outputs.push('');
+  const outputs = asArray(slots.outputs).slice(0,1).map(v=>String(v||'')); while(outputs.length<1) outputs.push('');
   const gains = asArray(mixer.gains).slice(0,2).map(v=>finite(v)); while(gains.length<2) gains.push(0);
   const mutes = asArray(mixer.mutes).slice(0,2).map(Boolean); while(mutes.length<2) mutes.push(false);
   const placement = asArray(mixer.placement).slice(0,2).map(v=>['stereo','left','right'].includes(v)?v:'stereo'); while(placement.length<2) placement.push('stereo');
@@ -205,7 +205,7 @@ function getDevice(addr){const a=String(addr||'').toUpperCase();return model.sta
 function assignedAction(d){
   if(!d)return '';
   const act=d.connected?'disconnect':'connect';
-  const label=d.connected?'Disconnect':d.status==='connecting'?'Cancel':d.status==='error'?'Retry':d.status==='standby'?'Switch to this output':'Connect';
+  const label=d.connected?'Disconnect':d.status==='connecting'?'Cancel':d.status==='error'?'Retry':'Connect';
   return btn(label,`bt-action:${act}:${d.addr}`,'secondary',model.btBusy?'disabled':'');
 }
 function autoToggle(d){
@@ -213,8 +213,8 @@ function autoToggle(d){
   return `<button class="auto-toggle ${d.autoConnect?'on':''}" data-bt-auto="${attr(d.addr)}" data-auto-enabled="${d.autoConnect?'1':'0'}" ${model.btBusy?'disabled':''}><span>Auto</span><i><b></b></i></button>`;
 }
 function nodeCard(label,d,index,m,output=false){
-  if(!d)return card(`<small class="micro-label">${label}</small><span class="empty-icon">${SVG.device}</span><b>${output?(index===1?'Add second output':'No output'):index===1?'Add second source':'Add a source'}</b><span>${output?'Pair or assign a Bluetooth headset or speaker.':'Pair a phone or computer and assign it to this input.'}</span>${btn('Add device','go-devices')}`,'empty-slot node-card');
-  const connected=d.connected, state=connected?'connected':d.status==='connecting'?'connecting':d.status==='error'?'error':d.status==='standby'?'disconnected':'disconnected';
+  if(!d)return card(`<small class="micro-label">${label}</small><span class="empty-icon">${SVG.device}</span><b>${output?('No output'):index===1?'Add second source':'Add a source'}</b><span>${output?'Pair or assign a Bluetooth headset or speaker.':'Pair a phone or computer and assign it to this input.'}</span>${btn('Add device','go-devices')}`,'empty-slot node-card');
+  const connected=d.connected, state=connected?'connected':d.status==='connecting'?'connecting':d.status==='error'?'error':'disconnected';
   const btVolume=Math.max(0,Math.min(100,model.pendingVolumes[d.addr]?.value ?? (d.volumeKnown?finite(d.volume,100):100)));
   if(d.volumeKnown&&btVolume>0) model.btVolumeMemory[d.addr]=btVolume;
   const btMuted=d.volumeKnown&&btVolume===0;
@@ -292,13 +292,13 @@ function dashboardPage(){
     ${card(`<div class="mixer-head"><div><small>Mixer</small><b>Headroom ${m.headroomDb} dB</b></div>${btn('Advanced','go-audio','ghost')}</div>
     ${[0,1].map(i=>`<div class="channel"><div class="channel-top"><span>Input ${i+1}</span><input data-mix-gain="${i}" type="range" min="-30" max="6" step="1" value="${m.gains[i]||0}"><output data-mix-output="${i}">${m.gains[i]||0} dB</output><button class="btn ${m.mutes[i]?'primary':'ghost'}" data-mute="${i}">${m.mutes[i]?'Unmute':'Mute'}</button></div><div class="channel-bottom"><small>Play on</small><div class="segments">${[['stereo','Both'],['left','L'],['right','R']].map(([v,l])=>`<button data-place="${i}:${v}" class="${m.placement[i]===v?'active':''}">${l}</button>`).join('')}</div><small>${m.placement[i]==='stereo'?'Stereo':m.placement[i]==='left'?'Mono to left ear':'Mono to right ear'}</small></div></div>`).join('')}
     <div class="master"><span>Master</span><input id="master-gain" type="range" min="-30" max="6" value="${m.master}"><output id="master-output">${m.master} dB</output><button class="btn ${m.masterMute?'primary':'ghost'}" data-action="master-mute">${m.masterMute?'Unmute':'Mute'}</button></div>`,'mixer')}
-    ${outConnector(outs)}<div class="output-column">${[0,1].map(i=>nodeCard('Output '+(i+1),outs[i],i,m,true)).join('')}</div></div></div>`;
+    ${outConnector(outs)}<div class="output-column">${nodeCard('Output',outs[0],0,m,true)}</div></div></div>`;
 }
 
 function deviceCard(d){
   const caps=asArray(d.caps), assigned=roleLabel(d.role), busy=model.btBusy;
   const kindLabel=d.kind==='source'?'Sends audio':d.kind==='output'?'Plays audio':d.kind==='audio-bidirectional'?'Sends and plays audio':(d.paired?'Bluetooth device':'Type unknown');
-  const supportedRoles=new Set(['',...(caps.includes('sends_audio')?['in1','in2']:[]),...(caps.includes('plays_audio')?['out1','out2']:[])]); const staleRole=d.role&&!supportedRoles.has(d.role)?`<option value="${attr(d.role)}" selected>${esc(roleLabel(d.role))} (device missing)</option>`:''; const roleOptions=`<option value="" ${!d.role?'selected':''}>Unassigned</option>${staleRole}${caps.includes('sends_audio')?`<option value="in1" ${d.role==='in1'?'selected':''}>Input 1</option><option value="in2" ${d.role==='in2'?'selected':''}>Input 2</option>`:''}${caps.includes('plays_audio')?`<option value="out1" ${d.role==='out1'?'selected':''}>Output 1</option><option value="out2" ${d.role==='out2'?'selected':''}>Output 2</option>`:''}`;
+  const supportedRoles=new Set(['',...(caps.includes('sends_audio')?['in1','in2']:[]),...(caps.includes('plays_audio')?['out1']:[])]); const staleRole=d.role&&!supportedRoles.has(d.role)?`<option value="${attr(d.role)}" selected>${esc(roleLabel(d.role))} (device missing)</option>`:''; const roleOptions=`<option value="" ${!d.role?'selected':''}>Unassigned</option>${staleRole}${caps.includes('sends_audio')?`<option value="in1" ${d.role==='in1'?'selected':''}>Input 1</option><option value="in2" ${d.role==='in2'?'selected':''}>Input 2</option>`:''}${caps.includes('plays_audio')?`<option value="out1" ${d.role==='out1'?'selected':''}>Output</option>`:''}`;
   const actions=[];
   if(!d.paired) actions.push(btn('Pair',`bt-action:pair:${d.addr}`,'secondary',busy?'disabled':''));
   if(d.paired) actions.push(btn(d.connected?'Disconnect':'Connect',`bt-action:${d.connected?'disconnect':'connect'}:${d.addr}`,'secondary',busy?'disabled':''));

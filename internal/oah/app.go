@@ -30,13 +30,9 @@ type App struct {
 	networkApply *NetworkApply
 	wifiNetworks []WiFiNetwork
 
-	audioConfigMu sync.Mutex
-	mixerApplyMu  sync.Mutex
-	reconcileMu   sync.Mutex
-	// Guards the multi-output fan-out state below; only reconcileRoutes writes it.
-	outputRouteMu   sync.Mutex
-	combineModule   string
-	combineSlaves   string
+	audioConfigMu   sync.Mutex
+	mixerApplyMu    sync.Mutex
+	reconcileMu     sync.Mutex
 	btOpsMu         sync.Mutex
 	deviceNamesMu   sync.Mutex
 	deviceNames     map[string]string

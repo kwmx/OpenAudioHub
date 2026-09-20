@@ -25,11 +25,6 @@ type DevicePrefs struct {
 type SlotsConfig struct {
 	Inputs  []string `json:"inputs"`
 	Outputs []string `json:"outputs"`
-	// ActiveOutput is the index of the output the mix is routed to. The engine has
-	// one A2DP source endpoint, so exactly one output can be live; which one must be
-	// an explicit choice rather than whichever transport happens to be up, or
-	// reconcile flips between them as transports come and go.
-	ActiveOutput int `json:"activeOutput"`
 }
 
 type MixerConfig struct {

@@ -157,14 +157,8 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		// Only one Bluetooth output can hold the engine's single A2DP Source
 		// endpoint. Say so plainly for the other assigned output rather than
 		// showing "Connecting..." forever.
-		if strings.HasPrefix(devices[i].Role, "out") && !devices[i].Connected && !a.isActiveOutput(devices[i].Addr) {
-			devices[i].Reason = "Standby. Only one Bluetooth output can play at a time — switch to this output to use it."
-			devices[i].Status = "standby"
-		}
 		if devices[i].Connected {
 			devices[i].Status = "connected"
-		} else if devices[i].Status == "standby" {
-			// keep the explicit reason
 		} else if aclConnected && devices[i].Role != "" {
 			devices[i].Status = "connecting"
 		} else if devices[i].Role != "" {
@@ -312,20 +306,6 @@ func tailAddr(addr string) string {
 // activeOutputHolder returns the assigned output that currently holds the engine's
 // single A2DP source transport, ignoring except. Connecting another output means
 // taking the endpoint from this one.
-// isActiveOutput reports whether addr is the selected output slot.
-func (a *App) isActiveOutput(addr string) bool {
-	c := a.cfg.Get()
-	addr = strings.ToUpper(cleanAddr(addr))
-	if addr == "" || len(c.Slots.Outputs) == 0 {
-		return false
-	}
-	idx := c.Slots.ActiveOutput
-	if idx < 0 || idx >= len(c.Slots.Outputs) {
-		idx = 0
-	}
-	return strings.EqualFold(c.Slots.Outputs[idx], addr)
-}
-
 func (a *App) activeOutputHolder(except string) string {
 	except = strings.ToUpper(cleanAddr(except))
 	assigned := map[string]bool{}
