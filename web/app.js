@@ -205,7 +205,7 @@ function getDevice(addr){const a=String(addr||'').toUpperCase();return model.sta
 function assignedAction(d){
   if(!d)return '';
   const act=d.connected?'disconnect':'connect';
-  const label=d.connected?'Disconnect':d.status==='connecting'?'Cancel':d.status==='error'?'Retry':d.status==='blocked'?'Use this output':'Connect';
+  const label=d.connected?'Disconnect':d.status==='connecting'?'Cancel':d.status==='error'?'Retry':d.status==='standby'?'Switch to this output':'Connect';
   return btn(label,`bt-action:${act}:${d.addr}`,'secondary',model.btBusy?'disabled':'');
 }
 function autoToggle(d){
@@ -214,7 +214,7 @@ function autoToggle(d){
 }
 function nodeCard(label,d,index,m,output=false){
   if(!d)return card(`<small class="micro-label">${label}</small><span class="empty-icon">${SVG.device}</span><b>${output?(index===1?'Add second output':'No output'):index===1?'Add second source':'Add a source'}</b><span>${output?'Pair or assign a Bluetooth headset or speaker.':'Pair a phone or computer and assign it to this input.'}</span>${btn('Add device','go-devices')}`,'empty-slot node-card');
-  const connected=d.connected, state=connected?'connected':d.status==='connecting'?'connecting':d.status==='error'?'error':'disconnected';
+  const connected=d.connected, state=connected?'connected':d.status==='connecting'?'connecting':d.status==='error'?'error':d.status==='standby'?'disconnected':'disconnected';
   const btVolume=Math.max(0,Math.min(100,model.pendingVolumes[d.addr]?.value ?? (d.volumeKnown?finite(d.volume,100):100)));
   if(d.volumeKnown&&btVolume>0) model.btVolumeMemory[d.addr]=btVolume;
   const btMuted=d.volumeKnown&&btVolume===0;

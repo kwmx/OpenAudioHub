@@ -224,6 +224,18 @@ func (a *App) handleBTRole(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "invalid address"})
 		return
 	}
+	if strings.HasPrefix(q.Role, "out") {
+		// Assigning an output slot selects it: there is one A2DP source endpoint, so
+		// the choice of which output is live has to be explicit.
+		if idx := atoiLoose(strings.TrimPrefix(q.Role, "out")) - 1; idx >= 0 {
+			_ = a.cfg.Update(func(c *Config) error {
+				if idx < len(c.Slots.Outputs) {
+					c.Slots.ActiveOutput = idx
+				}
+				return nil
+			})
+		}
+	}
 
 	oldRole := a.roleFor(q.Addr)
 	// Capture the previous occupant so replacing a slot cannot leave a stale

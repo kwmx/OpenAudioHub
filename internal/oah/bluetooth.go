@@ -157,18 +157,13 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		// Only one Bluetooth output can hold the engine's single A2DP Source
 		// endpoint. Say so plainly for the other assigned output rather than
 		// showing "Connecting..." forever.
-		if strings.HasPrefix(devices[i].Role, "out") && !devices[i].Connected {
-			for _, other := range devices {
-				if other.Addr != devices[i].Addr && strings.HasPrefix(other.Role, "out") && outputTransport[strings.ToUpper(other.Addr)] {
-					devices[i].Reason = "This engine has one A2DP source endpoint, so only one Bluetooth output can play at a time. Use this output to switch to it."
-					devices[i].Status = "blocked"
-					break
-				}
-			}
+		if strings.HasPrefix(devices[i].Role, "out") && !devices[i].Connected && !a.isActiveOutput(devices[i].Addr) {
+			devices[i].Reason = "Standby. Only one Bluetooth output can play at a time — switch to this output to use it."
+			devices[i].Status = "standby"
 		}
 		if devices[i].Connected {
 			devices[i].Status = "connected"
-		} else if devices[i].Status == "blocked" {
+		} else if devices[i].Status == "standby" {
 			// keep the explicit reason
 		} else if aclConnected && devices[i].Role != "" {
 			devices[i].Status = "connecting"
@@ -317,6 +312,20 @@ func tailAddr(addr string) string {
 // activeOutputHolder returns the assigned output that currently holds the engine's
 // single A2DP source transport, ignoring except. Connecting another output means
 // taking the endpoint from this one.
+// isActiveOutput reports whether addr is the selected output slot.
+func (a *App) isActiveOutput(addr string) bool {
+	c := a.cfg.Get()
+	addr = strings.ToUpper(cleanAddr(addr))
+	if addr == "" || len(c.Slots.Outputs) == 0 {
+		return false
+	}
+	idx := c.Slots.ActiveOutput
+	if idx < 0 || idx >= len(c.Slots.Outputs) {
+		idx = 0
+	}
+	return strings.EqualFold(c.Slots.Outputs[idx], addr)
+}
+
 func (a *App) activeOutputHolder(except string) string {
 	except = strings.ToUpper(cleanAddr(except))
 	assigned := map[string]bool{}

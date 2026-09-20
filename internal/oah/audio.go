@@ -286,44 +286,57 @@ func (a *App) reconcileRoutes(reason string) {
 
 	// Keep every assigned output connected and audible. Only initiate a connection
 	// when Auto is enabled; manual Connect bypasses this policy.
-	// The engine registers a single A2DP Source endpoint, so only one Bluetooth
-	// output can hold it at a time. Attempting a second produces
-	// "Unable to select SEP" from BlueZ and a connection that never settles, so skip
-	// it and let the state explain why instead of retrying forever.
-	sourceHolder := ""
-	for _, addr := range outputOrder {
-		if outputMedia[addr] {
-			sourceHolder = addr
-			break
+	// The engine registers a single A2DP Source endpoint, so exactly one Bluetooth
+	// output can be live. Which one is an explicit choice (Slots.ActiveOutput) and
+	// not "whoever holds the transport": deriving it from transport state made
+	// reconcile flip between outputs whenever a transport went idle, which looked
+	// like the headset connect/disconnecting on its own.
+	selected := ""
+	if len(c.Slots.Outputs) > 0 {
+		idx := c.Slots.ActiveOutput
+		if idx < 0 || idx >= len(c.Slots.Outputs) {
+			idx = 0
 		}
+		selected = strings.ToUpper(c.Slots.Outputs[idx])
 	}
-	for _, addr := range outputOrder {
-		if outputMedia[addr] {
-			continue
-		}
-		if sourceHolder != "" {
-			a.logf("output %s waiting: %s already holds the single A2DP source endpoint", addr, sourceHolder)
-			continue
-		}
-		if !a.autoConnectFor(addr) {
-			continue
-		}
-		if a.connectTooSoon(addr, now) {
-			continue
-		}
-		// Even if the generic Bluetooth ACL is already connected, explicitly request
-		// A2DP when its media transport is missing.
-		_, err := a.run.Run(connectTimeout, "bluetoothctl", "connect", addr, "a2dp-sink")
-		a.noteConnectAttempt(addr, err == nil, now)
-		if err != nil {
-			a.logf("auto-connect output %s: %v", addr, err)
-		} else {
-			connected[addr] = true
-			outputMedia[addr] = true
-		}
+	if selected == "" && len(outputOrder) > 0 {
+		selected = outputOrder[0]
 	}
-	// Route after connecting, so both sink nodes exist before the fan-out is built.
-	a.ensureOutputRouting(outputOrder)
+
+	if selected != "" {
+		if !outputMedia[selected] && a.autoConnectFor(selected) && !a.connectTooSoon(selected, now) {
+			// Even if the generic Bluetooth ACL is already connected, explicitly
+			// request A2DP when its media transport is missing.
+			_, err := a.run.Run(connectTimeout, "bluetoothctl", "connect", selected, "a2dp-sink")
+			a.noteConnectAttempt(selected, err == nil, now)
+			if err != nil {
+				a.logf("auto-connect output %s: %v", selected, err)
+			} else {
+				connected[selected] = true
+				outputMedia[selected] = true
+			}
+		}
+		a.ensureOutputRouting([]string{selected})
+	} else {
+		a.ensureOutputRouting(nil)
+	}
+
+	// Standby outputs must be left alone rather than half-connected: a second
+	// output cannot hold the endpoint, and letting it flap is what produced the
+	// repeated connect/disconnect the user sees. Disconnect it and stop.
+	for _, addr := range outputOrder {
+		if addr == selected {
+			continue
+		}
+		if outputMedia[addr] || connected[addr] {
+			a.logf("standby output %s: releasing the link (selected output is %s)", addr, selected)
+			_, _ = a.run.Run(6*time.Second, "bluetoothctl", "disconnect", addr)
+			delete(connected, addr)
+			delete(outputMedia, addr)
+		}
+		// Do not auto-connect a standby output at all.
+		a.noteConnectAttempt(addr, false, now)
+	}
 
 	inputs := make([]string, 0, len(c.Slots.Inputs))
 	for _, raw := range c.Slots.Inputs {

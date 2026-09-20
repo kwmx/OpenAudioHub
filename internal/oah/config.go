@@ -110,6 +110,19 @@ func normalizeConfig(c *Config) {
 	for len(c.Slots.Outputs) < maxOutputs {
 		c.Slots.Outputs = append(c.Slots.Outputs, "")
 	}
+	if c.Slots.ActiveOutput < 0 || c.Slots.ActiveOutput >= len(c.Slots.Outputs) {
+		c.Slots.ActiveOutput = 0
+	}
+	// If the selected slot is empty, fall back to the first assigned one so a
+	// switch never leaves the mix unrouted.
+	if strings.TrimSpace(c.Slots.Outputs[c.Slots.ActiveOutput]) == "" {
+		for i, o := range c.Slots.Outputs {
+			if strings.TrimSpace(o) != "" {
+				c.Slots.ActiveOutput = i
+				break
+			}
+		}
+	}
 	if len(c.Mixer.Gains) < len(c.Slots.Inputs) {
 		c.Mixer.Gains = append(c.Mixer.Gains, make([]float64, len(c.Slots.Inputs)-len(c.Mixer.Gains))...)
 	}
