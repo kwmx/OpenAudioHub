@@ -601,6 +601,19 @@ func (a *App) btAction(addr, action string) error {
 		return nil
 	case "connect":
 		role := a.roleFor(addr)
+		// A device with no role has no route, so connecting it as an input or output
+		// cannot succeed. Say that plainly instead of surfacing a raw BlueZ error.
+		if role == "" {
+			info := a.bluetoothInfo(addr, "")
+			switch {
+			case contains(info.Caps, "plays_audio") && contains(info.Caps, "sends_audio"):
+				return fmtErr("assign this device to an input or output before connecting it")
+			case contains(info.Caps, "sends_audio"):
+				return fmtErr("assign this device to Input 1 or Input 2 before connecting it")
+			case contains(info.Caps, "plays_audio"):
+				return fmtErr("assign this device to an output before connecting it")
+			}
+		}
 		args := []string{"connect", addr}
 		if strings.HasPrefix(role, "in") {
 			// There are exactly two local A2DP sink SEPs in the current engine:
