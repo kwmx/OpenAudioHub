@@ -12,7 +12,7 @@ STATE={
 'audio':{'preset':'balanced','preferredRate':48000,'allowedRates':[44100,48000],'quantum':2048,'bluealsaPeriodUs':100000,'bluealsaBufferUs':500000,'resampler':'auto','codecPolicy':'compatibility','liveMeters':False,'secondarySbcMaxBitpool':35,'secondaryAdvertisedDelayMs':0},
 'wifi':{'ssid':'Test-5G','band':'5 GHz','freq':5180},
 'system':{'hostname':'openaudiohub','mdns':'openaudiohub.local','btName':'OpenAudioHub','version':'0.1.6-rc1','uptime':'1h'},
-'health':{'wifi':{'state':'connected','value':'Test-5G · 5 GHz'},'bluetooth':{'state':'connected','value':'2 inputs · 1 output'},'audio':{'state':'connected','value':'Running'},'system':{'state':'connected','value':'Healthy'}},'pairing':{}}
+'health':{'wifi':{'state':'connected','value':'Test-5G · 5 GHz'},'bluetooth':{'state':'connected','value':'2 inputs · 1 output'},'audio':{'state':'connected','value':'Running'},'system':{'state':'connected','value':'Healthy'}},'pairing':{},'delayReport':{'requestedMs':150,'state':'reported','input':'Input 2 (BlueALSA receiver)','addr':'AA:AA:AA:AA:AA:02','attempt':'reported','detail':'The acquired transport reports this total.','actualMs':150,'actualKnown':True,'attemptedAt':'2026-09-19T20:00:00Z','capable':True}}
 class BrowserRegression(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
@@ -91,6 +91,37 @@ class BrowserRegression(unittest.TestCase):
   self.page.wait_for_selector('[data-action="mixer-retry"]');self.emit();self.assertEqual(self.page.locator('[data-mix-gain="1"]').input_value(),'-9')
   self.page.locator('[data-action="mixer-retry"]').click();self.page.wait_for_timeout(300)
   self.assertEqual(self.page.evaluate('window.__server.state.mixer.gains[1]'),-9)
+ def test_av_delay_applies_only_the_delay(self):
+  # The status must describe the applied value, never the saved or typed one, and
+  # Apply must not touch the rest of the audio configuration.
+  self.route('Audio')
+  card=self.page.locator('.delay-card')
+  self.assertIn('Reported',card.inner_text())
+  inp=card.locator('[data-audio="secondaryAdvertisedDelayMs"]')
+  inp.fill('300')
+  self.emit()
+  self.assertEqual(inp.input_value(),'300')
+  self.assertIn('Reported',card.inner_text())
+  card.locator('[data-action="delay-apply"]').click()
+  self.page.wait_for_timeout(300)
+  writes=self.page.evaluate('window.__server.writes')
+  self.assertEqual(writes[-1][0],'/api/audio/delay')
+  self.assertEqual(writes[-1][1],{'ms':300})
+  # Reset returns to the engine default through the same endpoint.
+  card.locator('[data-action="delay-reset"]').click()
+  self.page.wait_for_timeout(300)
+  writes=self.page.evaluate('window.__server.writes')
+  self.assertEqual(writes[-1],['/api/audio/delay',{'ms':0}])
+  self.assertEqual(card.locator('[data-audio="secondaryAdvertisedDelayMs"]').input_value(),'0')
+ def test_av_delay_states_are_shown(self):
+  self.route('Audio')
+  card=self.page.locator('.delay-card')
+  for state,label in [('pending','Pending confirmation'),('reported','Reported'),('rejected','Rejected'),('mismatch','Not confirmed'),('unsupported','Not supported here'),('default','Engine default')]:
+   self.emit(lambda s,st=state: s['delayReport'].update({'state':st}))
+   self.assertIn(label,card.inner_text())
+  # The affected input must always be named, and the primary marked unsupported.
+  self.assertIn('Input 2',card.inner_text())
+  self.assertIn('Input 1 runs on PipeWire',card.inner_text())
  def test_receiver_details_and_mobile_layout(self):
   self.page.locator('.receiver-details').nth(1).locator('summary').click();self.emit()
   self.assertTrue(self.page.locator('.receiver-details').nth(1).evaluate('e=>e.open'))

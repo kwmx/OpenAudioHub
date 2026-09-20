@@ -32,7 +32,7 @@ connected at the same time:
 | Input 2 | source → BlueZ → patched BlueALSA A2DP sink → `bluealsa-aplay` → ALSA `default` → PipeWire |
 | Output 1 | PipeWire mix → WirePlumber A2DP source → BlueZ → headset or speaker |
 
-Because the engine exposes exactly two A2DP sink endpoints, a third source is
+Because OpenAudioHub registers exactly two A2DP sink endpoints, a third source is
 refused by BlueZ with *device or resource busy*. That is a capacity limit, not a
 fault. Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -136,7 +136,7 @@ filled, then set the mixer levels.
 | **Devices** | Pairing and scanning, role assignment, auto-connect, connect/disconnect/forget, Bluetooth volume, receiver settings. |
 | **Network** | Current network, band/channel/signal, other networks, and join with automatic rollback. |
 | **Audio** | Presets, sample rates, buffers and latency, codec policy, secondary receiver, experimental A/V delay report. |
-| **System** | Hostname and Bluetooth name, about, restart audio engine, backup, reboot, change password. |
+| **System** | Hostname and Bluetooth name, about, restart audio graph, backup, reboot, change password. |
 | **Diagnostics** | CPU, memory, temperature, PipeWire errors, transports, service states and recent logs. |
 
 ### Two separate volume controls
@@ -169,10 +169,31 @@ not recompile anything and does not restart the primary input.
 ### Experimental A/V delay report
 
 *Advertised total sink delay* (0–2000 ms) asks the secondary receiver to report a
-fixed **total** rendering delay to the source. **Zero leaves engine behaviour
-unchanged.** It is a reported total, not extra buffering and not an automatic
-measurement, and it does not guarantee that a video player will stay in sync.
-Leave it at 0 unless you are calibrating deliberately.
+fixed **total** rendering delay to its source. It applies to **Input 2 only** — the
+BlueALSA receiver. **Input 1 runs on PipeWire, whose owning process exposes no
+supported way to write this value, so Input 1 is unsupported and unaffected.**
+
+**Zero keeps the engine default** and reports nothing. The number is the total
+latency from source to ears, **not** extra buffering, and there is deliberately no
+separate offset control — a residual error belongs inside this total, not added on
+top of it. Headphone or output latency you measured is already part of the total.
+
+The card reports what was actually observed rather than what was saved. Saving a
+value or restarting a service is never shown as success:
+
+| Status | Meaning |
+|---|---|
+| Engine default | Requested 0. |
+| Pending confirmation | Applied; the acquired transport does not show it yet. |
+| Reported | The acquired transport currently exposes the requested total. |
+| Rejected | BlueZ refused the write from the owning connection. |
+| Not confirmed | Accepted, but the transport does not show it. |
+| Not supported here | No delay-report support available. |
+
+**Apply to receiver** changes only this value without restarting the audio graph.
+**Reset to 0** returns to the engine default. BlueZ accepting a report is not proof
+that the source corrected its video — only re-measuring shows that. The on-device
+calibration test is in [`docs/SETUP.md`](docs/SETUP.md).
 
 ## Files and permissions
 

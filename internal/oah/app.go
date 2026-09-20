@@ -220,7 +220,7 @@ func (a *App) recoverHTTP(next http.Handler) http.Handler {
 				a.logf("panic[%s] %s %s: %v", ref, r.Method, r.URL.Path, v)
 				log.Printf("OpenAudioHub panic[%s]: %v\n%s", ref, v, debug.Stack())
 				if !strings.HasPrefix(r.URL.Path, "/events") {
-					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "OpenAudioHub recovered from an internal error. Try again.", "reference": ref})
+					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "That request failed. The hub is still running.", "reference": ref})
 				}
 			}
 		}()

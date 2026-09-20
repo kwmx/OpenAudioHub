@@ -31,6 +31,7 @@ func (a *App) routes(mux *http.ServeMux) {
 
 	mux.HandleFunc("POST /api/mixer", a.requireAuth(a.handleMixer))
 	mux.HandleFunc("POST /api/audio", a.requireAuth(a.handleAudio))
+	mux.HandleFunc("POST /api/audio/delay", a.requireAuth(a.handleAudioDelay))
 
 	mux.HandleFunc("POST /api/network/scan", a.requireAuth(a.handleNetworkScan))
 	mux.HandleFunc("POST /api/network/join", a.requireAuth(a.handleNetworkJoin))
@@ -196,9 +197,9 @@ func (a *App) handleBTAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.btAction(q.Addr, q.Action); err != nil {
-		msg := "Bluetooth could not complete that action. The hub remains usable; try again or check Diagnostics."
+		msg := "Bluetooth did not complete that action. Try again, or check Diagnostics."
 		if q.Action == "forget" {
-			msg = "The device could not be fully removed. Its OpenAudioHub role was cleared; try Forget again."
+			msg = "The device was unassigned but not removed. Try Forget again."
 		}
 		a.writeProblem(w, 409, msg, "bluetooth "+q.Action+" "+q.Addr, err)
 		return
@@ -311,6 +312,32 @@ func (a *App) handleMixer(w http.ResponseWriter, r *http.Request) {
 	a.signalRefresh()
 	writeJSON(w, 200, map[string]any{"ok": true, "revision": a.cfg.Get().Revision})
 }
+
+// handleAudioDelay applies only the secondary receiver's advertised delay. It is
+// deliberately separate from handleAudio so Apply/Reset cannot restart the audio
+// graph or disturb unsaved edits to other audio settings.
+//
+// It returns 202 with the freshly computed DelayReport. That report is normally
+// "pending": the value can only be confirmed once the source reconnects and BlueZ
+// exposes the acquired transport, so the caller must not treat this response as
+// proof that the report took effect.
+func (a *App) handleAudioDelay(w http.ResponseWriter, r *http.Request) {
+	var q struct {
+		MS int `json:"ms"`
+	}
+	if err := decodeJSON(r, &q); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid request"})
+		return
+	}
+	if err := a.applyReceiverDelay(q.MS); err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	a.signalRefresh()
+	rep := a.delayReport(a.listTransports())
+	writeJSON(w, 202, map[string]any{"ok": true, "revision": a.cfg.Get().Revision, "delayReport": rep})
+}
+
 func (a *App) handleAudio(w http.ResponseWriter, r *http.Request) {
 	var q AudioConfig
 	if err := decodeJSON(r, &q); err != nil {
@@ -393,7 +420,7 @@ func (a *App) handleSystemAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.systemAction(q.Action); err != nil {
-		a.writeProblem(w, 500, "The system action could not be completed.", "system action "+q.Action, err)
+		a.writeProblem(w, 500, "That system action failed.", "system action "+q.Action, err)
 		return
 	}
 	writeJSON(w, 202, map[string]any{"ok": true, "revision": a.cfg.Get().Revision})

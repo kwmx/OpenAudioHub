@@ -86,15 +86,8 @@ func (a *App) applyAudioConfig(cfg AudioConfig) error {
 		}
 	}
 	if receiverChanged {
-		a.btOpsMu.Lock()
-		// Restart only the secondary receiver; the primary and output remain intact.
-		for addr := range a.bluealsaPCMAddresses() {
-			_, _ = a.run.Run(6*time.Second, "bluetoothctl", "disconnect", addr)
-		}
-		_, err := a.run.Run(12*time.Second, "systemctl", "try-restart", "openaudiohub-bluealsa.service")
-		a.btOpsMu.Unlock()
-		if err != nil {
-			return fmtErr("settings saved, but the secondary receiver did not restart; reconnect after checking Diagnostics")
+		if err := a.restartSecondaryReceiverLocked(); err != nil {
+			return err
 		}
 	} else if bridgeChanged {
 		if _, err := a.run.Run(10*time.Second, "systemctl", "try-restart", "openaudiohub-bluealsa-bridge.service"); err != nil {
@@ -104,6 +97,57 @@ func (a *App) applyAudioConfig(cfg AudioConfig) error {
 	if graphChanged || receiverChanged {
 		a.requestReconcile("audio settings changed")
 	}
+	a.signalRefresh()
+	return nil
+}
+
+// restartSecondaryReceiverLocked cycles the secondary receiver so it re-reads
+// audio.json at startup. The caller must hold audioConfigMu.
+//
+// Requested capabilities only reach the source after the peer reconnects, so this
+// does not report success by itself: the outcome is observable through
+// DelayReport, which stays pending until the acquired transport shows the value.
+func (a *App) restartSecondaryReceiverLocked() error {
+	a.btOpsMu.Lock()
+	// Restart only the secondary receiver; the primary and output remain intact.
+	for addr := range a.bluealsaPCMAddresses() {
+		_, _ = a.run.Run(6*time.Second, "bluetoothctl", "disconnect", addr)
+	}
+	_, err := a.run.Run(12*time.Second, "systemctl", "try-restart", "openaudiohub-bluealsa.service")
+	a.btOpsMu.Unlock()
+	if err != nil {
+		return fmtErr("settings saved, but the secondary receiver did not restart; reconnect after checking Diagnostics")
+	}
+	return nil
+}
+
+// applyReceiverDelay changes only the secondary receiver's advertised delay and
+// leaves every other audio setting, and playback, untouched. ms == 0 restores the
+// engine default. It waits for nothing: report the resulting DelayReport instead
+// of claiming success here.
+func (a *App) applyReceiverDelay(ms int) error {
+	a.audioConfigMu.Lock()
+	defer a.audioConfigMu.Unlock()
+	if ms < 0 || ms > 2000 {
+		return fmtErr("advertised delay must be 0\u20132000 ms; 0 uses the engine default")
+	}
+	old := a.cfg.Get().Audio
+	if old.SecondaryAdvertisedDelayMS == ms {
+		return nil
+	}
+	next := old
+	next.SecondaryAdvertisedDelayMS = ms
+	if err := a.cfg.Update(func(c *Config) error { c.Audio.SecondaryAdvertisedDelayMS = ms; return nil }); err != nil {
+		return err
+	}
+	if err := a.writeAudioProjection(next); err != nil {
+		_ = a.cfg.Update(func(c *Config) error { c.Audio.SecondaryAdvertisedDelayMS = old.SecondaryAdvertisedDelayMS; return nil })
+		return fmtErr("could not write non-secret audio configuration: %v", err)
+	}
+	if err := a.restartSecondaryReceiverLocked(); err != nil {
+		return err
+	}
+	a.requestReconcile("advertised delay changed")
 	a.signalRefresh()
 	return nil
 }
@@ -499,7 +543,7 @@ func (a *App) updateMixer(next MixerConfig) error {
 func (a *App) audioReady() error {
 	// Service state is a more reliable appliance health signal than a single CLI
 	// client probe. wpctl/pactl can transiently fail while the graph is still
-	// streaming, which previously produced false "Audio engine unavailable" UI.
+	// streaming, which previously produced false "Audio graph unavailable" UI.
 	out, err := a.audioUserCommand(3*time.Second, "systemctl", "--user", "is-active", "pipewire.service", "wireplumber.service")
 	if err == nil && strings.Count(strings.TrimSpace(out), "active") >= 2 {
 		return nil

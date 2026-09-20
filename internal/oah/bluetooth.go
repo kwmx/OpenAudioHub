@@ -36,7 +36,7 @@ func (a *App) bluetoothDeviceSubset(kind string) map[string]bool {
 	return set
 }
 
-func (a *App) listBluetoothDevices() ([]Device, error) {
+func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 	// `bluetoothctl devices` can contain dozens of nearby transient devices.
 	// Calling `bluetoothctl info` for every one every few seconds overloaded BlueZ
 	// and the small board. Only paired/connected/assigned devices need detailed
@@ -92,7 +92,6 @@ func (a *App) listBluetoothDevices() ([]Device, error) {
 		devices = append(devices, a.bluetoothInfo(addr, ""))
 	}
 
-	transports := a.listTransports()
 	inputTransport := map[string]bool{}
 	outputTransport := map[string]bool{}
 	for _, t := range transports {
@@ -110,7 +109,11 @@ func (a *App) listBluetoothDevices() ([]Device, error) {
 				devices[i].Codec = t.Codec
 				devices[i].Rate = t.Rate
 				devices[i].SBCMaxBitpool = t.SBCMaxBitpool
-				devices[i].LatencyMS = t.Delay / 10
+				// Only a transport that actually exposes Delay may set a latency;
+				// an absent property must not read as a confirmed 0 ms.
+				if t.DelayKnown {
+					devices[i].LatencyMS = delayUnitsToMS(t.Delay)
+				}
 				if t.VolumeKnown {
 					devices[i].Volume = int(float64(t.Volume)/127*100 + 0.5)
 					devices[i].VolumeKnown = true
@@ -333,6 +336,7 @@ func (a *App) listTransports() []Transport {
 				if fs := strings.Fields(v); len(fs) > 0 {
 					n, _ := strconv.ParseInt(strings.TrimPrefix(fs[0], "0x"), 16, 64)
 					t.Delay = int(n)
+					t.DelayKnown = true
 				}
 			}
 		}

@@ -36,11 +36,33 @@ class RuntimeTests(unittest.TestCase):
    self.assertEqual(r.returncode,0,r.stderr)
    r=subprocess.run(['python3','-c','import sys;open(sys.argv[1]).read()',str(private)],capture_output=True,text=True,preexec_fn=demote)
    self.assertNotEqual(r.returncode,0);self.assertIn('PermissionError',r.stderr)
+ def test_delay_option_reaches_the_receiver(self):
+  # The advertised total must survive validation and be printed for the daemon
+  # script to export as OAH_ADVERTISED_DELAY_MS.
+  for ms in (0,1,150,2000):
+   r=self.run_values(json.dumps({'secondaryAdvertisedDelayMs':ms}))
+   self.assertEqual(r.returncode,0,(ms,r.stderr))
+   self.assertEqual(r.stdout.split()[3],str(ms))
+  for ms in (-1,2001,65535,True,'150'):
+   r=self.run_values(json.dumps({'secondaryAdvertisedDelayMs':ms}))
+   self.assertEqual(r.returncode,78,ms)
+   self.assertNotIn('Traceback',r.stderr)
+ def test_daemon_exports_delay_and_state_path(self):
+  s=(ROOT/'packaging/scripts/bluealsa-daemon.sh').read_text()
+  self.assertIn('OAH_ADVERTISED_DELAY_MS="${V[3]}"',s)
+  self.assertIn('OAH_DELAY_STATE_FILE',s)
+  # Only the process that owns the transport may write the property, so the
+  # outcome has to be recorded somewhere the control plane can read it.
+  self.assertIn('/run/openaudiohub/delay-report.state',s)
  def test_patch_changes_sink_not_shared_maximum(self):
   # Structural fixture, not a substitute for full upstream build.
   text='''#include <stdint.h>\n#include "ba-config.h"\n#define SBC_MAX_BITPOOL 250\nstruct a2dp_sep a2dp_sbc_source = {\n .max_bitpool = SBC_MAX_BITPOOL,\n};\nstatic int a2dp_sbc_sink_transport_start(struct ba_transport *t) {\n return 0;\n}\nstruct a2dp_sep a2dp_sbc_sink = {\n .max_bitpool = SBC_MAX_BITPOOL,\n\t.configuration_select = a2dp_sbc_configuration_select,\n};\n'''
   out=patcher.patch(text);self.assertIn('#define SBC_MAX_BITPOOL 250',out);self.assertIn('.init = oah_sbc_sink_init',out)
   self.assertIn('g_variant_new_uint16(ms * 10)',out)
+  # The report must come from the owning connection and record its outcome.
+  self.assertIn('t->bluez_dbus_owner',out)
+  self.assertIn('oah_write_delay_state',out)
+  self.assertIn('"rejected"',out)
   self.assertEqual(out.count('.init = oah_sbc_sink_init'),1)
   with self.assertRaises(ValueError):patcher.patch(out)
   with self.assertRaises(ValueError):patcher.patch('unexpected source')

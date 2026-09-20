@@ -50,4 +50,4 @@ OpenAudioHub deliberately keeps two control domains separate:
 
 ## Endpoint capacity
 
-The current engine exposes two A2DP sink SEPs (PipeWire + BlueALSA), so two source devices may be connected simultaneously. An attempted third A2DP source can legitimately receive BlueZ `EBUSY` / `Device or resource busy`. OpenAudioHub removes stale unassigned A2DP transports during reconciliation so they cannot consume a slot invisibly.
+OpenAudioHub exposes two A2DP sink SEPs (PipeWire + BlueALSA), so two source devices may be connected simultaneously. An attempted third A2DP source can legitimately receive BlueZ `EBUSY` / `Device or resource busy`. OpenAudioHub removes stale unassigned A2DP transports during reconciliation so they cannot consume a slot invisibly.

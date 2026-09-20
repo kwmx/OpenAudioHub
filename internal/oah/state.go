@@ -9,12 +9,16 @@ func (a *App) buildState(includeDiag bool) State {
 	a.stateBuildMu.Lock()
 	defer a.stateBuildMu.Unlock()
 	c := a.cfg.Get()
-	devices, btErr := a.listBluetoothDevices()
+	// Gather transports once and share them: each entry costs a bluetoothctl
+	// subprocess pair, and this runs on every state build.
+	transports := a.listTransports()
+	devices, btErr := a.listBluetoothDevices(transports)
 	wifi := a.wifiState()
 	sys := a.systemState()
 	audioErr := a.audioReady()
 	xruns := 0
 	st := State{Revision: c.Revision, Devices: devices, Slots: c.Slots, Mixer: c.Mixer, WiFi: wifi, Audio: c.Audio, System: sys}
+	st.DelayReport = a.delayReport(transports)
 	a.mu.RLock()
 	st.Pairing = a.pairing
 	a.mu.RUnlock()
@@ -65,7 +69,7 @@ func (a *App) buildState(includeDiag bool) State {
 		h.Audio.Value = "Audio controls recovering"
 	case audioErr != nil:
 		h.Audio.State = "error"
-		h.Audio.Value = "Audio engine unavailable"
+		h.Audio.Value = "Audio graph unavailable"
 	case xruns > 0:
 		h.Audio.State = "warning"
 		h.Audio.Value = fmt.Sprintf("%d Hz · q%d · %d errors", c.Audio.PreferredRate, c.Audio.Quantum, xruns)

@@ -8,11 +8,12 @@ hardware-qualified appliance image.
 
 | Check | Result | Scope |
 |---|---|---|
-| `go test -v -timeout 60s ./...` | PASS — 16 tests | Regressions plus receiver bounds, config projection permissions/secrets, revision monotonicity and cached state |
+| `go test -v -timeout 60s ./...` | PASS — 34 tests | Regressions plus receiver bounds, config projection permissions/secrets, revision monotonicity, cached state, and the full delay-report state machine (default, unsupported, pending, reported, rejected, mismatch), unit conversion, persistence/reset and capability detection |
 | `go vet ./...` | PASS | Go static checks, exit 0 |
 | `go test -race -timeout 90s ./...` | PASS | The available test suite, not a simulated physical appliance |
-| `python3 tests/test_runtime.py` | PASS — 6 tests | Runtime option validation, secret/public read boundary using an unprivileged UID, legacy service migration checks and structural source-patch guards |
-| `python3 tests/browser_regression.py` | PASS — 7 tests | Headless Chromium, offline, mocked fetch/SSE; dropdown identity, real range drag, unsaved text/audio edits, stale revisions, ordered writes, volume separation, failed-save retry, mobile overflow |
+| `python3 tests/test_runtime.py` | PASS — 8 tests | Runtime option validation, delay passthrough and bounds, daemon exports, secret/public read boundary using an unprivileged UID, legacy service migration checks and structural source-patch guards |
+| `python3 tests/test_receiver_compile.py` | PASS — 3 tests | Compiles the injected BlueALSA C against stubs with `-Wall -Wextra -Werror`; proves the injected block is valid C, not that it links or runs against real BlueALSA |
+| `python3 tests/browser_regression.py` | PASS — 9 tests | Headless Chromium, offline, mocked fetch/SSE; dropdown identity, real range drag, unsaved text/audio edits, stale revisions, ordered writes, volume separation, failed-save retry, mobile overflow, A/V delay apply/reset and status rendering |
 | Bash / Python / JavaScript syntax | PASS | Output in `tests/artifacts/syntax.log` |
 | Linux ARM64 Go build | PASS | Cross-compiled; not executed on ARM in the packaging environment |
 | Linux AMD64 Go build | PASS | Executed with `--version`, reports `0.1.6-rc1` |
@@ -38,8 +39,10 @@ rather than fetched. Commands are in `tests/artifacts/`.
 - Physical Bluetooth source volume control, sustained concurrent playback, and
   missing RTP / underrun behaviour.
 - BlueZ acceptance of the experimental owning-client delay report, source
-  application behaviour, and measured A/V sync. Keep its default value of zero
-  until independently tested and calibrated.
+  application behaviour, and measured A/V sync. The apply path, state machine and
+  unit conversion are covered by host tests; the D-Bus write, the live transport
+  read-back and any effect on lip-sync are **not** hardware-tested. Keep the value
+  at zero until the on-device calibration test in `docs/SETUP.md` passes.
 - Safari and Firefox native `<select>` behaviour. Browser automation used Chromium
   only.
 - Exhaustive security, load, crash-recovery or installation-rollback testing.

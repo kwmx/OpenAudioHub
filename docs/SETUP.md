@@ -120,22 +120,72 @@ A disconnected Mac has no PCM object, so that query cannot succeed then.
 
 ## 5. A/V synchronization (experimental)
 
-Leave **Fixed total rendering-delay report** at **0** until playback is stable.
-Zero preserves the existing engine behavior. A nonzero value requests one fixed
-total delay report from the owning BlueALSA D-Bus connection when a transport
-starts. It is expressed in milliseconds in the UI and converted to 0.1 ms units
-for BlueZ. Reconnect is required.
+This control applies to **Input 2 only** — the BlueALSA receiver. Input 1 runs on
+PipeWire, whose owning process exposes no supported way for OpenAudioHub to write
+this value, so Input 1 is **unsupported** and is not affected by this setting.
 
-This controls the **reported total rendering latency**, not an additional amount
-of audio to buffer. Do not enter a residual 50 ms offset as a total when the real
-path is hundreds of milliseconds. Measure or calibrate the full path using the
-same video player and headphones; the source must support and honor reports.
+Leave **Advertised total sink delay** at **0** until playback is stable. Zero keeps
+the engine default and reports nothing. A nonzero value asks the secondary
+receiver to report one fixed **total** rendering delay to its source when the
+transport is acquired.
 
-No automatic measurement, downstream headphone-latency discovery, physical clock
-synchronization, or guaranteed correction is implemented. A successful D-Bus
-request is not proof of correct lip-sync. BlueZ may reject a report when ownership
-or delay-reporting support is absent; inspect the receiver journal. Return to 0
-and reconnect to disable this experiment.
+The number is the **total reported latency from source to ears**, not an extra
+amount of audio to buffer. A residual lip-sync error is added into this total, not
+aplied on top of it; there is deliberately no separate offset control, because two
+stacked numbers is exactly how a total gets double-counted. Latency you measured
+from the headphones is already part of the total — do not add it again.
+
+### Reading the status
+
+The card reports what was **observed**, not what was saved. Saving a value or
+restarting a service never counts as success on its own.
+
+| Status | Meaning |
+|---|---|
+| **Engine default** | Requested 0. Nothing is reported. |
+| **Pending confirmation** | Applied, but the acquired transport does not show the value yet. Normal until the source reconnects. |
+| **Reported** | The acquired transport currently exposes the requested total. |
+| **Rejected** | BlueZ refused the write from the owning connection. The attempt detail is shown. |
+| **Not confirmed** | BlueZ accepted the write, but the transport does not show it. |
+| **Not supported here** | The installed receiver has no delay-report support, or the value cannot be applied. |
+
+The card also lists what the transport reports and when the last attempt was made.
+
+BlueZ accepting a report is **not** proof that the source corrected its video.
+Only re-measuring shows that. There is no automatic measurement, no headphone
+latency discovery, no physical clock synchronization, and no guaranteed
+correction.
+
+Press **Apply to receiver** to change only this value; the audio graph is not
+restarted. Press **Reset to 0** to return to the engine default. Both are also
+available through the general Audio apply bar, but the dedicated buttons never
+touch your other unsaved audio edits.
+
+### On-device A/V calibration test
+
+Run this on the appliance with the real source, video player and headphones.
+
+1. Set the value to **0** and press **Apply to receiver**. Play a sync test video
+   (a visible flash with a tone, or a clapper clip) and confirm the audio is late
+   or early by a noticeable, repeatable amount. Record this baseline offset.
+2. Type the measured whole-path offset in milliseconds and press **Apply to
+   receiver**. Confirm the card leaves **Engine default** and shows either
+   **Pending confirmation** or **Reported**.
+3. Reconnect the source (or wait for the reconcile loop). Confirm the status
+   becomes **Reported** and that *Transport reports* equals the requested value.
+   If it stays **Pending confirmation** with "not exposed by BlueZ", this source
+   does not expose a readable delay — record that finding rather than assuming
+   success. If it shows **Rejected**, capture the attempt detail from the card and
+   the receiver journal.
+4. Re-measure the same clip with the same setup. **Pass:** the offset moves toward
+   zero by roughly the reported amount and is stable across two attempts.
+   **Inconclusive:** the offset is unchanged — the source ignored the report.
+   This is a valid outcome to record; it is not a reason to raise the number.
+5. Press **Reset to 0**, confirm the card returns to **Engine default**, and
+   confirm the audio still plays. Then repeat step 3 once after a full reboot.
+
+Do not trade an unexplained dropout for a larger reporting value. If playback
+becomes unstable, reset to 0 first and investigate separately.
 
 ## 6. On-device acceptance checks
 
@@ -146,8 +196,9 @@ and reconnect to disable this experiment.
    settings field. Controls must not reset. Failed saves retain a retry action.
 5. Disconnect a source from the source device; check that the other keeps playing.
 6. Reboot only after the running test passes; confirm web/audio services return.
-7. Calibrate A/V reporting separately. Do not trade an unexplained dropout for a
-   larger reporting value.
+7. Calibrate A/V reporting with the procedure in step 5, including the Reset and
+   post-reboot checks. Do not trade an unexplained dropout for a larger reporting
+   value.
 
 The UI is served locally at `http://openaudiohub.local/` after services are healthy.
 Reload the page after upgrading. Source files are served with `Cache-Control:

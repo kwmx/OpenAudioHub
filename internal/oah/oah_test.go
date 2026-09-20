@@ -102,7 +102,7 @@ func TestHTTPPanicIsSanitized(t *testing.T) {
 	if strings.Contains(w.Body.String(), "secret internal detail") {
 		t.Fatal("internal panic detail leaked to client")
 	}
-	if !strings.Contains(w.Body.String(), "recovered from an internal error") {
+	if !strings.Contains(w.Body.String(), "That request failed") {
 		t.Fatalf("unexpected body: %s", w.Body.String())
 	}
 }

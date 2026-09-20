@@ -8,6 +8,7 @@
   --surface: #191917;        /* cards */
   --raised: #20201d;         /* secondary buttons, active nav, dialogs */
   --border: #302f2b;         /* card hairlines and control borders */
+  --border-strong: #45443e;  /* hover border on raised controls */
   --divider: #24231f;        /* row dividers inside cards */
   --track: #3b3a35;          /* off toggles, empty signal bars */
 
@@ -35,6 +36,7 @@
   --state-warning-tint: rgba(195, 155, 93, .10);
   --state-warning-border: rgba(195, 155, 93, .45);
   --state-error: #b96d68;
+  --danger-text: #d9a09c;    /* destructive button label (lighter than --state-error) */
   --state-error-tint: rgba(185, 109, 104, .10);
   --state-error-border: rgba(185, 109, 104, .6);
   --state-connected-tint: rgba(127, 166, 140, .08);

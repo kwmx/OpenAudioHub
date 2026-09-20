@@ -24,6 +24,38 @@ connection which acquired the transport. This is different from BlueALSA's local
 PCM DelayAdjustment metadata. Rejection is logged and does not abort decoding.
 No upstream-report success or physical synchronization is inferred by the UI.
 
+### Outcome reporting
+
+Because only the acquiring connection may write the property, only this daemon
+knows whether BlueZ accepted it. The patched receiver therefore records the
+outcome where the control plane can read it:
+
+```
+OAH_DELAY_STATE_FILE=/run/openaudiohub/delay-report.state
+```
+
+```
+transport=/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF/a2dpsnk/source
+requested_ms=150
+result=reported | rejected
+detail=<BlueZ error message, when rejected>
+epoch=1726789012
+```
+
+`packaging/scripts/bluealsa-daemon.sh` sets that path and exports the requested
+value; the write is best effort and never fails the daemon. The daemon merges the
+record with the **live** transport property (`internal/oah/delayreport.go`), so
+`reported` means the acquired transport currently exposes the requested total —
+not merely that a write was attempted. A record for an older value is ignored.
+
+States surfaced to the UI: `default` (requested 0), `unsupported` (no patched
+receiver, or **the primary PipeWire input**, which has no supported owning-process
+mechanism for this property), `pending`, `reported`, `rejected`, `mismatch`.
+
+Neither a stored value nor an accepted write proves that a source application
+corrected its video. That can only be established by re-measuring; see the
+on-device calibration test in `docs/SETUP.md`.
+
 Official API reference:
 https://manpages.debian.org/trixie/bluez/org.bluez.MediaTransport.5.en.html
 

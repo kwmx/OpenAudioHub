@@ -164,6 +164,11 @@ type Transport struct {
 	Volume        int    `json:"volume"`
 	VolumeKnown   bool   `json:"volumeKnown,omitempty"`
 	Delay         int    `json:"delay"`
+	// DelayKnown distinguishes "BlueZ reports a delay of 0" from "BlueZ exposes
+	// no delay property for this transport". Without it an absent property reads
+	// as a confirmed zero and the delay report would claim success. Units are
+	// 0.1 ms, as defined by BlueZ MediaTransport1.
+	DelayKnown bool `json:"delayKnown,omitempty"`
 }
 
 type SystemState struct {
@@ -189,6 +194,7 @@ type State struct {
 	Mixer       MixerConfig  `json:"mixer"`
 	WiFi        WiFiState    `json:"wifi"`
 	Audio       AudioConfig  `json:"audio"`
+	DelayReport DelayReport  `json:"delayReport"`
 	System      SystemState  `json:"system"`
 	Health      Health       `json:"health"`
 	Diagnostics Diagnostics  `json:"diagnostics"`
