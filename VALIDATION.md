@@ -1,4 +1,4 @@
-# OpenAudioHub 1.0.1 validation report
+# OpenAudioHub 1.0.2 validation report
 
 Scope: what has actually been executed for this release, and what still has to be
 proven on real hardware. Host-side checks passing is not the same as a
@@ -16,7 +16,7 @@ hardware-qualified appliance image.
 | `python3 tests/browser_regression.py` | PASS: 14 tests | Headless Chromium, offline, mocked fetch/SSE; dropdown identity, real range drag, unsaved text/audio edits, stale revisions, ordered writes, volume separation, failed-save retry, mobile overflow, A/V delay apply/reset and status, device grouping, discovered-device type, safe buffer combinations |
 | Bash / Python / JavaScript syntax | PASS | Output in `tests/artifacts/syntax.log` |
 | Linux ARM64 Go build | PASS | Cross-compiled; not executed on ARM in the packaging environment |
-| Linux AMD64 Go build | PASS | Executed with `--version`, reports `1.0.1` |
+| Linux AMD64 Go build | PASS | Executed with `--version`, reports `1.0.2` |
 
 Notes on the browser tests: they load the real UI code and CSS offline and inject
 controlled API/SSE responses, so they exercise the actual DOM controls and

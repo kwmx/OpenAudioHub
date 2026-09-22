@@ -157,6 +157,12 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		// Only one Bluetooth output can hold the engine's single A2DP Source
 		// endpoint. Say so plainly for the other assigned output rather than
 		// showing "Connecting..." forever.
+		// Connected without a bond is a distinct state: the link is up but no key is
+		// stored, so it cannot be assigned. Say that instead of only disabling the
+		// control, or the screen looks broken.
+		if !devices[i].Paired && aclConnected && devices[i].Role == "" {
+			devices[i].Reason = "Connected without a stored pairing, so it cannot be assigned yet. Press Pair to finish, then choose a role."
+		}
 		if devices[i].Connected {
 			devices[i].Status = "connected"
 		} else if aclConnected && devices[i].Role != "" {
@@ -194,10 +200,21 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		if ri != rj {
 			return ri < rj
 		}
+		// Within the unassigned group, strongest signal first. That is the device
+		// the user is standing next to and trying to pair, so alphabetical order
+		// buried it among everything BlueZ had ever seen.
+		if ri == unassignedRank {
+			if devices[i].RSSI != devices[j].RSSI {
+				return devices[i].RSSI > devices[j].RSSI
+			}
+		}
 		return strings.ToLower(devices[i].Name) < strings.ToLower(devices[j].Name)
 	})
 	return devices, nil
 }
+
+// unassignedRank sorts every device with no role after the assigned ones.
+const unassignedRank = 900
 
 // roleRank orders devices in the list: inputs by slot, then outputs, then
 // unassigned. Generic so it does not need editing when a slot is added.
@@ -208,7 +225,7 @@ func roleRank(s string) int {
 	if n := atoiLoose(strings.TrimPrefix(s, "out")); strings.HasPrefix(s, "out") && n > 0 {
 		return 100 + n
 	}
-	return 900
+	return unassignedRank
 }
 
 func (a *App) bluetoothInfo(addr, listedName string) Device {
@@ -570,6 +587,15 @@ func (a *App) btAction(addr, action string) error {
 			if name := parseBluetoothDeviceLines(out)[addr]; usableBluetoothName(name, addr) {
 				a.rememberDeviceName(addr, name)
 			}
+		}
+		// A device can be connected without a stored bond. Pairing it in that state
+		// does nothing, because BlueZ sees an established link and returns without
+		// creating one. That is why the Pair button appeared inert. Drop the link
+		// first; reconcile restores any role afterwards.
+		if info := a.bluetoothInfo(addr, ""); info.Connected && !info.Paired {
+			a.logf("pair: %s is connected without a bond, dropping the link first", addr)
+			_, _ = a.run.Run(8*time.Second, "bluetoothctl", "disconnect", addr)
+			time.Sleep(1200 * time.Millisecond)
 		}
 		// Pairing a headset routinely takes longer than a controller round trip: the
 		// peer may first have to establish a link, and some devices wait for the user

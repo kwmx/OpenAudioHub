@@ -346,11 +346,15 @@ function deviceCard(d){
   const kindLabel=d.kind==='source'?'Sends audio':d.kind==='output'?'Plays audio':d.kind==='audio-bidirectional'?'Sends and plays audio':(d.paired?'Bluetooth device':'Type unknown');
   const supportedRoles=new Set(['',...(caps.includes('sends_audio')?model.state.slots.inputs.map((_,i)=>'in'+(i+1)):[]),...(caps.includes('plays_audio')?['out1']:[])]); const staleRole=d.role&&!supportedRoles.has(d.role)?`<option value="${attr(d.role)}" selected>${esc(roleLabel(d.role))} (device missing)</option>`:''; const roleOptions=`<option value="" ${!d.role?'selected':''}>Unassigned</option>${staleRole}${caps.includes('sends_audio')?model.state.slots.inputs.map((_,i)=>`<option value="in${i+1}" ${d.role==='in'+(i+1)?'selected':''}>Input ${i+1}</option>`).join(''):''}${caps.includes('plays_audio')?`<option value="out1" ${d.role==='out1'?'selected':''}>Output</option>`:''}`;
   const actions=[];
-  if(!d.paired) actions.push(btn('Pair',`bt-action:pair:${d.addr}`,'secondary',busy?'disabled':''));
-  if(d.paired) actions.push(btn(d.connected?'Disconnect':'Connect',`bt-action:${d.connected?'disconnect':'connect'}:${d.addr}`,'secondary',busy?'disabled':''));
-  if(d.paired) actions.push(iconBtn(SVG.trash,'Forget this device',`bt-action:forget:${d.addr}`,'ghost',busy?'disabled':''));
+  // Actions follow the real state, not a single flag. A connected device always
+  // offers Disconnect, and an unbonded one offers Pair as the primary action even
+  // while it is linked, because that is what unblocks role assignment.
+  if(d.connected) actions.push(btn('Disconnect',`bt-action:disconnect:${d.addr}`,'secondary',busy?'disabled':''));
+  if(!d.paired) actions.push(btn('Pair',`bt-action:pair:${d.addr}`,'primary',busy?'disabled':''));
+  else if(!d.connected) actions.push(btn('Connect',`bt-action:connect:${d.addr}`,'secondary',busy?'disabled':''));
+  if(d.paired||d.connected) actions.push(iconBtn(SVG.trash,'Forget this device',`bt-action:forget:${d.addr}`,'ghost',busy?'disabled':''));
   return card(`<div class="device-head"><span class="device-icon">${iconFor(d)}</span><div class="device-title"><div><small class="micro-label">${esc(kindLabel)}</small><b title="${attr(d.name)}">${esc(d.name)}</b></div>${pill(d.connected?'connected':'disconnected',d.connected?'Connected':d.paired?'Paired':'Available')}</div></div><div class="meta-row"><span>${esc(d.addr||'Unknown address')}</span>${d.rssi?`<span>${signal(d.rssi)}${d.rssi}</span>`:''}</div>
-  <label>Role<select data-role-addr="${attr(d.addr)}" ${(!d.paired&&!d.role)||busy?'disabled':''}>${roleOptions}</select><small>${d.role?(d.paired?`Assigned as ${esc(assigned)}`:`${esc(assigned)} assignment is stale. Choose Unassigned to clear it`):(d.paired?'Pick a role to route this device':'Not paired. Use Pair first, then assign a role')}</small></label>
+  <label>Role<select data-role-addr="${attr(d.addr)}" ${(!d.paired&&!d.role)||busy?'disabled':''}>${roleOptions}</select><small>${d.role?(d.paired?`Assigned as ${esc(assigned)}`:`${esc(assigned)} assignment is stale. Choose Unassigned to clear it`):(d.paired?'Pick a role to route this device':(d.connected?'Not bonded yet. Press Pair to finish, then choose a role':'Not paired. Press Pair first, then choose a role'))}</small></label>
   <div class="device-actions">${actions.join('')}</div>`,'device-card');
 }
 function devicesPage(){const s=model.state;let count=0;if(s.pairing.active&&s.pairing.until)count=Math.max(0,Math.ceil((new Date(s.pairing.until)-Date.now())/1000));

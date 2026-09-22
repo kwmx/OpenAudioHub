@@ -11,7 +11,7 @@ STATE={
 'mixer':{'gains':[0,0],'mutes':[False,False],'placement':['stereo','stereo'],'master':0,'masterMute':False,'headroomDb':-6,'limiter':False},
 'audio':{'preset':'balanced','preferredRate':48000,'allowedRates':[44100,48000],'quantum':2048,'bluealsaPeriodUs':100000,'bluealsaBufferUs':500000,'resampler':'auto','codecPolicy':'compatibility','liveMeters':False,'secondarySbcMaxBitpool':35,'secondaryAdvertisedDelayMs':0},
 'wifi':{'ssid':'Test-5G','band':'5 GHz','freq':5180},
-'system':{'hostname':'openaudiohub','mdns':'openaudiohub.local','btName':'OpenAudioHub','version':'1.0.1','uptime':'1h'},
+'system':{'hostname':'openaudiohub','mdns':'openaudiohub.local','btName':'OpenAudioHub','version':'1.0.2','uptime':'1h'},
 'health':{'wifi':{'state':'connected','value':'Test-5G · 5 GHz'},'bluetooth':{'state':'connected','value':'2 inputs · 1 output'},'audio':{'state':'connected','value':'Running'},'system':{'state':'connected','value':'Healthy'}},'inputCapacity':{'max':4,'proven':2},'pairing':{},'delayReport':{'requestedMs':150,'state':'reported','input':'Input 2 (BlueALSA receiver)','addr':'AA:AA:AA:AA:AA:02','attempt':'reported','detail':'The acquired transport reports this total.','actualMs':150,'actualKnown':True,'attemptedAt':'2026-09-19T20:00:00Z','capable':True}}
 class BrowserRegression(unittest.TestCase):
  @classmethod

@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-c69a5b"></a>
-  <img alt="Version 1.0.1" src="https://img.shields.io/badge/version-1.0.1-c69a5b">
+  <img alt="Version 1.0.2" src="https://img.shields.io/badge/version-1.0.2-c69a5b">
   <img alt="Go 1.23 or later" src="https://img.shields.io/badge/Go-1.23%2B-c69a5b">
   <img alt="Platform: Linux arm64 and amd64" src="https://img.shields.io/badge/platform-linux%20arm64%20%7C%20amd64-c69a5b">
   <img alt="Debian trixie or Armbian" src="https://img.shields.io/badge/OS-Debian%20trixie%20%7C%20Armbian-c69a5b">
@@ -21,7 +21,7 @@ gain and ear placement, and send the result to **one** Bluetooth headset or
 speaker, all controlled from a local web page, with no cloud dependency.
 
 Reference target: **Orange Pi Zero 2W** running Armbian / Debian Trixie.
-Current version: **1.0.1**. See [Status](#status) for what is verified on hardware.
+Current version: **1.0.2**. See [Status](#status) for what is verified on hardware.
 
 ## What it does
 
