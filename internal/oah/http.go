@@ -45,6 +45,8 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/system/update", a.requireAuth(a.handleUpdateCheck))
 	mux.HandleFunc("POST /api/system/update", a.requireAuth(a.handleUpdateApply))
 	mux.HandleFunc("GET /api/diagnostics", a.requireAuth(a.handleDiagnostics))
+	mux.HandleFunc("GET /api/doctor", a.requireAuth(a.handleDoctor))
+	mux.HandleFunc("POST /api/doctor/fix", a.requireAuth(a.handleDoctorFix))
 
 	webRoot := os.Getenv("OPENAUDIOHUB_WEB")
 	if webRoot == "" {
@@ -138,6 +140,35 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, a.buildState(true))
+}
+
+func (a *App) handleDoctor(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, a.runDoctor(nil))
+}
+
+// handleDoctorFix applies the fixes named in ids, or every available fix when
+// all is set, and returns the report from the checks run afterwards.
+func (a *App) handleDoctorFix(w http.ResponseWriter, r *http.Request) {
+	var q struct {
+		IDs []string `json:"ids"`
+		All bool     `json:"all"`
+	}
+	if err := decodeJSON(r, &q); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid request"})
+		return
+	}
+	ids := map[string]bool{}
+	if q.All {
+		ids["*"] = true
+	}
+	for _, id := range q.IDs {
+		ids[id] = true
+	}
+	if len(ids) == 0 {
+		writeJSON(w, 400, map[string]string{"error": "choose at least one fix"})
+		return
+	}
+	writeJSON(w, 200, a.runDoctor(ids))
 }
 
 func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {

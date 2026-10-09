@@ -55,6 +55,33 @@ class BrowserRegression(unittest.TestCase):
   if mut:mut(s)
   self.page.evaluate('s=>window.__emit(s)',s)
  def route(self,name):self.page.locator(f'.topbar [data-route="{name}"]').click()
+ def test_doctor_lists_issues_and_applies_a_fix(self):
+  self.page.evaluate('''()=>{
+   const check=(id,title,status,detail,fixLabel='')=>({id,area:'bluetooth',title,status,detail,fixLabel});
+   const report=fixed=>({problems:fixed?0:1,warnings:1,fixable:fixed?0:1,fixed:fixed?1:0,checks:[
+    fixed?{...check('bluetooth-service','Bluetooth service','ok','Running.'),fixed:true}:check('bluetooth-service','Bluetooth service','problem','bluetooth.service is failed, so no device can connect.','Start Bluetooth'),
+    check('wifi-band','Wi-Fi','warning','Connected on 2.4 GHz.'),
+    check('audio-session','PipeWire audio','ok','Running.'),check('disk-space','Storage','ok','900 MB free (40%).')]});
+   window.__doctorPosts=[];const inner=window.fetch;
+   window.fetch=async(path,opts={})=>{
+    if(path==='/api/doctor')return new Response(JSON.stringify(report(false)),{status:200,headers:{'Content-Type':'application/json'}});
+    if(path==='/api/doctor/fix'){window.__doctorPosts.push(JSON.parse(opts.body));await new Promise(r=>setTimeout(r,100));return new Response(JSON.stringify(report(true)),{status:200,headers:{'Content-Type':'application/json'}});}
+    return inner(path,opts);
+   };
+  }''')
+  self.route('Diagnostics')
+  card=self.page.locator('.doctor-card')
+  card.locator('text=1 problem, 1 warning').wait_for()
+  rows=card.locator('.doctor-list').first.locator('.doctor-row')
+  self.assertEqual(rows.count(),2)
+  self.assertIn('Bluetooth service',rows.nth(0).inner_text())  # problems sort before warnings
+  self.assertIn('2 checks passed',card.locator('details summary').inner_text())
+  self.assertEqual(rows.nth(1).locator('button').count(),0)  # nothing to fix for the warning
+  rows.nth(0).locator('button',has_text='Start Bluetooth').click()
+  card.locator('text=Fixed.').wait_for()
+  self.assertEqual(self.page.evaluate('window.__doctorPosts'),[{'ids':['bluetooth-service']}])
+  self.assertIn('1 warning',card.locator('.doctor-head b').inner_text())
+  self.emit();self.assertEqual(self.page.locator('.doctor-card').count(),1)
  def test_dropdown_native_node_and_audio_draft_survive_updates(self):
   self.route('Audio');sel=self.page.locator('[data-audio="secondarySbcMaxBitpool"]');sel.evaluate('e=>window.savedSelect=e');sel.focus()
   self.page.keyboard.press('ArrowDown')

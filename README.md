@@ -35,6 +35,9 @@ Current version: **1.0.2**. See [Status](#status) for what is verified on hardwa
 - Live state over Server-Sent Events: no polling and no page reloads, and open
   controls are never reset by incoming telemetry.
 - Single shared password; the whole interface is served from the device itself.
+- A built-in doctor checks Bluetooth, audio, storage and network for common
+  problems and fixes what it safely can, from **Diagnostics** or over SSH with
+  `sudo openaudiohubd --doctor`.
 
 ## How the audio path works
 

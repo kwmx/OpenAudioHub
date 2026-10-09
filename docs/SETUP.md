@@ -231,6 +231,25 @@ no-cache` so the browser revalidates the application scripts.
 
 ## Recovery
 
+Start with the doctor. In the web interface it is at the top of **Diagnostics**.
+Over SSH, when the web interface itself is down:
+
+```bash
+sudo openaudiohubd --doctor          # report only
+sudo openaudiohubd --doctor --fix    # apply every available fix
+```
+
+It checks the Bluetooth service, adapter, name, pairing helper, `main.conf`
+settings, pairing mode, assigned devices, reconnect backoff, saved device names,
+PipeWire, conflicting Debian BlueALSA services, the extra-input receiver,
+`audio.json`, free storage and the Wi-Fi band. Fixes start or restart the
+affected service, rewrite the affected file, or shrink the system journal. No fix
+restarts `bluetooth.service`: changes to `main.conf` apply after the next reboot.
+The command exits with status 1 while problems remain. Pairing mode and reconnect
+backoff live in the running daemon, so only the web interface checks them.
+
+If the doctor cannot fix it, use the manual steps below.
+
 Do not rerun the old broken installer merely to recover a manual experiment.
 Stop only the managed secondary stack and web supervisor before manual work:
 

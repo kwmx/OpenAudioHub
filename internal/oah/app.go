@@ -57,6 +57,11 @@ type App struct {
 	policedMu sync.Mutex
 	policed   map[string]time.Time
 
+	// doctorMu serializes doctor runs; standalone is set for the command line,
+	// where daemon-held state such as pairing mode does not exist.
+	doctorMu   sync.Mutex
+	standalone bool
+
 	loginMu    sync.Mutex
 	loginLimit *loginLimiter
 

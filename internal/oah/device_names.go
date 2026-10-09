@@ -11,6 +11,11 @@ import (
 
 var macLikeNameRE = regexp.MustCompile(`(?i)^[0-9a-f]{2}([:_-]?[0-9a-f]{2}){5}$`)
 
+// propertyLineRE matches bluetoothctl property output such as "RSSI: -60" or
+// "ManufacturerData Key: 0x004c". Releases before 1.0.3 cached these from scan
+// output as device names.
+var propertyLineRE = regexp.MustCompile(`^(RSSI|TxPower|ManufacturerData|ServiceData|AdvertisingData|AdvertisingFlags|UUIDs?|Connected|Paired|Bonded|Trusted|Blocked|Class|Icon|Appearance|Modalias|ServicesResolved|LegacyPairing|WakeAllowed|CablePairing|Name|Alias|Key|Value)( Key| Value)?:`)
+
 func deviceNameCachePath(configPath string) string {
 	if v := strings.TrimSpace(os.Getenv("OPENAUDIOHUB_DEVICE_NAME_CACHE")); v != "" {
 		return v
@@ -97,7 +102,7 @@ func usableBluetoothName(name, addr string) bool {
 	if low == "unknown" || low == "unknown device" || low == "n/a" || low == "none" || strings.HasPrefix(low, "unnamed device") {
 		return false
 	}
-	if macLikeNameRE.MatchString(name) {
+	if macLikeNameRE.MatchString(name) || propertyLineRE.MatchString(name) {
 		return false
 	}
 	compact := strings.NewReplacer(":", "", "-", "", "_", "", " ", "").Replace(strings.ToUpper(name))

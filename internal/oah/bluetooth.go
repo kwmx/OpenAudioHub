@@ -2,6 +2,7 @@ package oah
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -781,10 +782,10 @@ func (a *App) setPairing(enable bool) error {
 		return err
 	}
 	if enable {
-		_ = os.MkdirAll("/run/openaudiohub", 0755)
-		_ = os.WriteFile("/run/openaudiohub/pairing-enabled", []byte("1\n"), 0644)
+		_ = os.MkdirAll(filepath.Dir(pairingFlagPath), 0755)
+		_ = os.WriteFile(pairingFlagPath, []byte("1\n"), 0644)
 	} else {
-		_ = os.Remove("/run/openaudiohub/pairing-enabled")
+		_ = os.Remove(pairingFlagPath)
 	}
 	var until time.Time
 	if enable {
