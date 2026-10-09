@@ -11,7 +11,11 @@ export function installInteractionGuards(root, onIdle) {
   root.addEventListener('focusout',()=>setTimeout(onIdle,0),true);
 }
 export function interacting(root) {
-  return pointerDown || (root.contains(document.activeElement) && document.activeElement.matches('input,select,textarea'));
+  // A control that merely keeps focus after a click must not freeze live updates;
+  // patchHTML already protects focused and edited controls. A focused select is
+  // the exception: re-sorting can move its card, which closes an open popup.
+  const el=document.activeElement;
+  return pointerDown || (root.contains(el) && (el.tagName==='SELECT' || (el.matches('input,textarea') && dirty.has(el))));
 }
 export function releaseControl(el) { if(el) dirty.delete(el); }
 export function releaseControls(root) { for(const el of root.querySelectorAll('input,select,textarea')) dirty.delete(el); }

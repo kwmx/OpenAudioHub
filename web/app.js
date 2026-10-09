@@ -353,7 +353,7 @@ function deviceCard(d){
   if(!d.paired) actions.push(btn('Pair',`bt-action:pair:${d.addr}`,'primary',busy?'disabled':''));
   else if(!d.connected) actions.push(btn('Connect',`bt-action:connect:${d.addr}`,'secondary',busy?'disabled':''));
   if(d.paired||d.connected) actions.push(iconBtn(SVG.trash,'Forget this device',`bt-action:forget:${d.addr}`,'ghost',busy?'disabled':''));
-  return card(`<div class="device-head"><span class="device-icon">${iconFor(d)}</span><div class="device-title"><div><small class="micro-label">${esc(kindLabel)}</small><b title="${attr(d.name)}">${esc(d.name)}</b></div>${pill(d.connected?'connected':'disconnected',d.connected?'Connected':d.paired?'Paired':'Available')}</div></div><div class="meta-row"><span>${esc(d.addr||'Unknown address')}</span>${d.rssi?`<span>${signal(d.rssi)}${d.rssi}</span>`:''}</div>
+  return card(`<div class="device-head"><span class="device-icon">${iconFor(d)}</span><div class="device-title"><div><small class="micro-label">${esc(kindLabel)}</small><b title="${attr(d.name)}">${esc(d.name)}</b></div>${pill(d.connected?'connected':'disconnected',d.connected?'Connected':d.paired?'Paired':'Available')}</div></div><div class="meta-row"><span>${esc(d.addr||'Unknown address')}</span>${d.rssi?`<span>${signal(d.rssi)}${d.rssi}</span>`:''}</div>${d.reason?`<p class="node-reason">${esc(d.reason)}</p>`:''}
   <label>Role<select data-role-addr="${attr(d.addr)}" ${(!d.paired&&!d.role)||busy?'disabled':''}>${roleOptions}</select><small>${d.role?(d.paired?`Assigned as ${esc(assigned)}`:`${esc(assigned)} assignment is stale. Choose Unassigned to clear it`):(d.paired?'Pick a role to route this device':(d.connected?'Not bonded yet. Press Pair to finish, then choose a role':'Not paired. Press Pair first, then choose a role'))}</small></label>
   <div class="device-actions">${actions.join('')}</div>`,'device-card');
 }
@@ -444,7 +444,34 @@ function systemPage(){const s=model.state.system;return `<div class="page"><div 
   ${card(`<h2>Maintenance</h2><div class="stack-actions">${iconBtn(SVG.refresh,'Restart the audio graph','system:restart-audio')}<a class="btn secondary" href="/api/system/backup">Download configuration backup</a>${btn('Restore from backup','restore-backup','secondary')}<input id="restore-file" type="file" accept=".zip,application/zip" hidden><p class="settings-note">A backup contains config.json, audio.json and wireplumber.conf. Restoring applies the first two (configuration and audio settings) and reconnects audio. If the backup has a different password you will be signed out.</p>${btn('Reboot hub','system:reboot','danger')}</div>`)}
   ${card(`<h2>Change password</h2><label>Current password<input id="pw-current" type="password"></label><label>New password<input id="pw-new" type="password"></label><label>Repeat new password<input id="pw-again" type="password"></label>${btn('Change password','password-change')}`)}</div></div>`}
 
-function diagnosticsPage(){const d=model.diagnostics||model.state.diagnostics;if(!d)return `<div class="page"><div class="page-title"><h1>Diagnostics</h1></div>${iconBtn(SVG.refresh,'Load diagnostics','diag-refresh','primary')}</div>`;return `<div class="page"><div class="page-title"><div><h1>Diagnostics</h1><p>Health, transports and logs.</p></div><div>${iconBtn(SVG.refresh,'Refresh diagnostics','diag-refresh')} ${iconBtn(SVG.copy,'Copy diagnostics','diag-copy')}</div></div><div class="diag-cards">${card('<small>CPU</small><b>'+d.cpuPercent.toFixed(1)+'%</b>')}${card('<small>Memory</small><b>'+d.memPercent.toFixed(1)+'%</b>')}${card(`<small>Temperature</small><b>${d.tempC?d.tempC.toFixed(1)+' °C':'—'}</b>`)}${card('<small>PipeWire errors</small><b>'+d.xruns+'</b>')}</div>
+const DOCTOR_DOT={ok:'connected',warning:'warning',problem:'error',skipped:'disconnected'};
+const DOCTOR_RANK={problem:0,warning:1,skipped:2,ok:3};
+function normalizeDoctor(x){const r=asObject(x);return {ranAt:String(r.ranAt||''),problems:finite(r.problems),warnings:finite(r.warnings),fixable:finite(r.fixable),fixed:finite(r.fixed),
+  checks:asArray(r.checks).map(v=>{const c=asObject(v);return {id:String(c.id||''),title:String(c.title||''),status:DOCTOR_DOT[c.status]?String(c.status):'skipped',detail:String(c.detail||''),fixLabel:String(c.fixLabel||''),fixed:Boolean(c.fixed),fixError:String(c.fixError||''),fixNote:String(c.fixNote||'')}}).filter(c=>c.id)};}
+function doctorRow(c,busy){return `<div class="doctor-row" data-key="doctor-${attr(c.id)}">${dot(DOCTOR_DOT[c.status])}<div class="doctor-text"><b>${esc(c.title)}</b><span>${esc(c.detail)}</span>${c.fixed?`<em class="doctor-fixed">Fixed.${c.fixNote?' '+esc(c.fixNote):''}</em>`:''}${c.fixError?`<em class="doctor-failed">${esc(c.fixError)}</em>`:''}</div>${c.fixLabel?btn(c.fixLabel,'doctor-fix:'+c.id,'secondary',busy?'disabled':''):''}</div>`}
+function doctorSection(){
+  const r=model.doctor,busy=model.doctorBusy;
+  const run=btn(r?'Check again':'Run checks','doctor-run',r?'secondary':'primary',busy?'disabled':'');
+  if(!r)return section('Doctor',card(`<p class="settings-note">${busy?'Checking Bluetooth, audio, storage and network…':'Checks Bluetooth, audio, storage and network for common problems, and fixes what it safely can.'}</p><div class="device-actions">${run}</div>`,'doctor-card'));
+  // Checks fixed in this run stay in view so their confirmation is not hidden.
+  const shown=c=>c.status!=='ok'||c.fixed;
+  const issues=r.checks.filter(shown).sort((a,b)=>DOCTOR_RANK[a.status]-DOCTOR_RANK[b.status]),passed=r.checks.filter(c=>!shown(c));
+  const summary=r.problems||r.warnings?[r.problems?`${r.problems} problem${r.problems===1?'':'s'}`:'',r.warnings?`${r.warnings} warning${r.warnings===1?'':'s'}`:''].filter(Boolean).join(', '):'No problems found';
+  const fixAll=r.fixable>1?btn(`Fix all (${r.fixable})`,'doctor-fix-all','primary',busy?'disabled':''):'';
+  return section('Doctor',card(`<div class="doctor-head"><div><b>${esc(summary)}</b><small>${busy?'Working…':r.fixed?`${r.fixed} fixed just now`:'Fixes never restart Bluetooth, so playing audio is not interrupted.'}</small></div><div class="device-actions">${fixAll}${run}</div></div>
+  ${issues.length?`<div class="doctor-list">${issues.map(c=>doctorRow(c,busy)).join('')}</div>`:''}
+  ${passed.length?`<details class="doctor-passed"><summary>${passed.length} check${passed.length===1?'':'s'} passed</summary><div class="doctor-list">${passed.map(c=>doctorRow(c,busy)).join('')}</div></details>`:''}`,'doctor-card'));
+}
+async function runDoctor(fix){
+  if(model.doctorBusy)return;model.doctorBusy=true;render(true);
+  try{const r=normalizeDoctor(fix?await post('/api/doctor/fix',fix):await api('/api/doctor'));model.doctor=r;
+    // Fixes change service states; refresh the rest of the page so it agrees.
+    if(fix&&model.diagnostics)await loadDiagnostics();
+    if(fix){const failed=r.checks.filter(c=>c.fixError).length;toast(failed?`${r.fixed} fixed, ${failed} could not be fixed`:`${r.fixed} fixed`,failed?'error':undefined);}}
+  catch(e){toast(e.message,'error')}
+  finally{model.doctorBusy=false;render(true)}
+}
+function diagnosticsPage(){const d=model.diagnostics||model.state.diagnostics;if(!d)return `<div class="page"><div class="page-title"><h1>Diagnostics</h1></div>${doctorSection()}${iconBtn(SVG.refresh,'Load diagnostics','diag-refresh','primary')}</div>`;return `<div class="page"><div class="page-title"><div><h1>Diagnostics</h1><p>Health, transports and logs.</p></div><div>${iconBtn(SVG.refresh,'Refresh diagnostics','diag-refresh')} ${iconBtn(SVG.copy,'Copy diagnostics','diag-copy')}</div></div>${doctorSection()}<div class="diag-cards">${card('<small>CPU</small><b>'+d.cpuPercent.toFixed(1)+'%</b>')}${card('<small>Memory</small><b>'+d.memPercent.toFixed(1)+'%</b>')}${card(`<small>Temperature</small><b>${d.tempC?d.tempC.toFixed(1)+' °C':'—'}</b>`)}${card('<small>PipeWire errors</small><b>'+d.xruns+'</b>')}</div>
   ${section('Assigned audio paths',`<div class="table">${model.state.devices.filter(x=>x.role).map(x=>`<div class="tr"><span>${esc(roleLabel(x.role))}</span><span>${esc(x.name)}</span><span>${esc(x.backend||'not active')}</span><span>${x.connected?'connected':'disconnected'}</span></div>`).join('')||'<div class="table-empty">No roles assigned.</div>'}</div>`)}
   ${section('Bluetooth transports',`<div class="table">${d.transports.map(t=>`<div class="tr"><span>${esc(t.addr)}</span><span>${esc(t.codec||'—')}</span><span>${fmtRate(t.rate)}</span><span>${esc(t.state)}</span></div>`).join('')||'<div class="table-empty">No active Bluetooth transports.</div>'}</div>`)}
   ${section('Services',`<div class="service-list">${d.services.map(x=>`<div>${pill(x.state==='active'?'connected':'error',x.state||'unknown')}<span>${esc(x.name)}</span></div>`).join('')}</div>`)}
@@ -468,7 +495,17 @@ function openEvents(){
   const es=new EventSource('/events'); model.eventSource=es; model.realtime='connecting';
   es.onopen=()=>{model.realtime='connected'; if(model.state)render(true);};
   es.addEventListener('state',e=>{try{setState(JSON.parse(e.data));render(true)}catch(err){console.error('Ignored invalid state event',err)}});
-  es.onerror=()=>{model.realtime='reconnecting'; if(model.state)render(true);};
+  es.onerror=()=>{model.realtime='reconnecting'; if(model.state)render(true);
+    // The browser stops retrying after a 401 or a non-stream response. Start over
+    // through /api/state so an expired session reaches the lock screen.
+    if(es.readyState===EventSource.CLOSED&&model.eventSource===es){closeEvents();model.realtime='reconnecting';resyncEvents();}
+  };
+}
+function resyncEvents(){
+  setTimeout(()=>{
+    if(model.locked||model.eventSource)return;
+    api('/api/state').then(s=>{setState(s);openEvents();render(true)}).catch(()=>{if(!model.locked&&!model.eventSource)resyncEvents()});
+  },3000);
 }
 function closeEvents(){model.eventSource?.close();model.eventSource=null;model.realtime='connecting'}
 async function commitMixer(){
@@ -482,9 +519,11 @@ async function commitMixer(){
 }
 async function commitBTVolume(addr,value){
   const pending={value,acknowledged:false,until:Infinity};model.pendingVolumes[addr]=pending;
-  try { await post('/api/bluetooth/volume',{addr,volume:value});pending.acknowledged=true;pending.until=Date.now()+30000; }
+  let ok=false;
+  try { await post('/api/bluetooth/volume',{addr,volume:value});pending.acknowledged=true;pending.until=Date.now()+30000;ok=true; }
   catch(e){if(model.pendingVolumes[addr]===pending)delete model.pendingVolumes[addr];toast(e.message,'error');}
   if(model.pendingVolumes[addr]===pending || !model.pendingVolumes[addr])releaseControl(document.querySelector(`[data-bt-volume="${CSS.escape(addr)}"]`));render(true);
+  return ok;
 }
 
 app.addEventListener('change',async e=>{
@@ -526,24 +565,24 @@ app.addEventListener('input',e=>{
   if(e.target.id==='master-gain'){model.mixerDirty=true;model.mixerEdit++;model.localMixer.master=+e.target.value;document.querySelector('#master-output').textContent=`${e.target.value} dB`;}
   if(e.target.dataset.btVolume!==undefined){const addr=e.target.dataset.btVolume;const v=+e.target.value;model.pendingVolumes[addr]={value:v,acknowledged:false,until:Infinity};if(v>0)model.btVolumeMemory[addr]=v;const o=document.querySelector(`[data-bt-volume-output="${CSS.escape(addr)}"]`);if(o)o.textContent=`${v}%`;}
   if(e.target.dataset.bufferPair!==undefined){const [bp,bb]=e.target.value.split(':').map(Number);model.localAudio.bluealsaPeriodUs=bp;model.localAudio.bluealsaBufferUs=bb;model.localAudio.preset='custom';render();}
-  if(e.target.dataset.audio){const k=e.target.dataset.audio;model.localAudio[k]=e.target.type==='checkbox'?e.target.checked:(e.target.type==='number'||k==='preferredRate'||k==='secondarySbcMaxBitpool'?+e.target.value:e.target.value);model.localAudio.preset='custom';render();}
+  if(e.target.dataset.audio){const k=e.target.dataset.audio;model.localAudio[k]=e.target.type==='checkbox'?e.target.checked:(e.target.type==='number'||k==='preferredRate'||k==='secondarySbcMaxBitpool'?+e.target.value:e.target.value);if(k!=='secondaryAdvertisedDelayMs')model.localAudio.preset='custom';render();}
   if(e.target.dataset.rate){const n=+e.target.dataset.rate;model.localAudio.allowedRates=e.target.checked?[...new Set([...model.localAudio.allowedRates,n])]:model.localAudio.allowedRates.filter(x=>x!==n);model.localAudio.preset='custom';render();}
 });
 app.addEventListener('change',async e=>{
   if(e.target.dataset.mixGain!==undefined||e.target.id==='master-gain')await commitMixer();
   if(e.target.dataset.btVolume!==undefined)await commitBTVolume(e.target.dataset.btVolume,+e.target.value);
-  if(e.target.dataset.roleAddr){if(model.btBusy)return;model.btBusy=true;try{await post('/api/bluetooth/role',{addr:e.target.dataset.roleAddr,role:e.target.value});setState(await api('/api/state'));toast('Role updated')}catch(x){toast(x.message,'error')}finally{model.btBusy=false;render()}}
+  if(e.target.dataset.roleAddr){if(model.btBusy)return;model.btBusy=true;try{await post('/api/bluetooth/role',{addr:e.target.dataset.roleAddr,role:e.target.value});setState(await api('/api/state'));toast('Role updated')}catch(x){toast(x.message,'error')}finally{releaseControl(e.target);model.btBusy=false;render()}}
 });
 
 app.addEventListener('click',async e=>{
-  const r=e.target.closest('[data-route]')?.dataset.route;if(r){model.route=r;if(r==='Diagnostics'&&!model.diagnostics)loadDiagnostics();render();return}
+  const r=e.target.closest('[data-route]')?.dataset.route;if(r){model.route=r;if(r==='Diagnostics'&&!model.diagnostics)loadDiagnostics().then(()=>render(true));if(r==='Diagnostics'&&!model.doctor)runDoctor();render();return}
   const p=e.target.closest('[data-place]')?.dataset.place;if(p){const[i,v]=p.split(':');model.localMixer.placement[+i]=v;render();await commitMixer();return}
   const mute=e.target.closest('[data-mute]')?.dataset.mute;if(mute!==undefined){const i=+mute;model.localMixer.mutes[i]=!model.localMixer.mutes[i];render();await commitMixer();return}
   const preset=e.target.closest('[data-preset]')?.dataset.preset;if(preset){model.localAudio={...model.localAudio,...presets[preset],liveMeters:model.localAudio.liveMeters};releaseControls(app);render();return}
   const bssid=e.target.closest('[data-wifi-select]')?.dataset.wifiSelect;if(bssid){model.joinBssid=model.joinBssid===bssid?'':bssid;render();return}
-  const join=e.target.closest('[data-wifi-join]')?.dataset.wifiJoin;if(join){const n=model.state.wifi.networks.find(x=>x.bssid===join);if(!n){model.joinBssid='';render();toast('The network list changed. Scan again.','error');return}try{await post('/api/network/join',{ssid:n.ssid,password:document.querySelector('#join-password')?.value||'',bssid:n.bssid,band:n.band==='5 GHz'?'5GHz':'2.4GHz'});toast('Switching Wi‑Fi. Reconnect if the page drops.')}catch(x){toast(x.message,'error')}return}
+  const join=e.target.closest('[data-wifi-join]')?.dataset.wifiJoin;if(join){const n=model.state.wifi.networks.find(x=>x.bssid===join);if(!n){model.joinBssid='';render();toast('The network list changed. Scan again.','error');return}try{await post('/api/network/join',{ssid:n.ssid,password:document.querySelector('#join-password')?.value||'',bssid:n.bssid,band:n.band==='5 GHz'?'5GHz':n.band==='2.4 GHz'?'2.4GHz':''});toast('Switching Wi‑Fi. Reconnect if the page drops.')}catch(x){toast(x.message,'error')}return}
   const btAuto=e.target.closest('[data-bt-auto]');if(btAuto){if(model.btBusy)return;model.btBusy=true;try{await post('/api/bluetooth/auto',{addr:btAuto.dataset.btAuto,enabled:btAuto.dataset.autoEnabled!=='1'});setState(await api('/api/state'));toast('Auto-connect updated')}catch(x){toast(x.message,'error')}finally{model.btBusy=false;render()}return}
-  const btMute=e.target.closest('[data-bt-mute]');if(btMute){const addr=btMute.dataset.btMute,d=getDevice(addr);if(!d?.connected)return;const current=Math.max(0,Math.min(100,model.pendingVolumes[addr]?.value??finite(d.volume,100)));if(current>0)model.btVolumeMemory[addr]=current;const target=current===0?(model.btVolumeMemory[addr]||70):0;try{await commitBTVolume(addr,target);render();toast(target===0?'Bluetooth audio muted':'Bluetooth audio unmuted')}catch(x){toast(x.message,'error')}return}
+  const btMute=e.target.closest('[data-bt-mute]');if(btMute){const addr=btMute.dataset.btMute,d=getDevice(addr);if(!d?.connected)return;const current=Math.max(0,Math.min(100,model.pendingVolumes[addr]?.value??finite(d.volume,100)));if(current>0)model.btVolumeMemory[addr]=current;const target=current===0?(model.btVolumeMemory[addr]||70):0;if(await commitBTVolume(addr,target))toast(target===0?'Bluetooth audio muted':'Bluetooth audio unmuted');return}
   const action=e.target.closest('[data-action]')?.dataset.action;if(!action)return;
   try{
     if(action==='noop')return;
@@ -570,8 +609,11 @@ app.addEventListener('click',async e=>{
     }
     if(action==='identity-save'){await post('/api/system/identity',{hostname:document.querySelector('#system-hostname').value,btName:document.querySelector('#system-btname').value});releaseControl(document.querySelector('#system-hostname'));releaseControl(document.querySelector('#system-btname'));toast('Identity update requested');return}
     if(action.startsWith('system:')){const act=action.split(':')[1];if(act==='reboot'&&!confirm('Reboot OpenAudioHub now?'))return;await post('/api/system/action',{action:act});toast(`${act} requested`);return}
-    if(action==='password-change'){const cur=document.querySelector('#pw-current').value,n=document.querySelector('#pw-new').value,a=document.querySelector('#pw-again').value;if(n!==a)throw new Error('New passwords do not match');await post('/api/system/password',{Current:cur,New:n});toast('Password changed');model.locked=true;model.state=null;closeEvents();render();return}
+    if(action==='password-change'){const cur=document.querySelector('#pw-current').value,n=document.querySelector('#pw-new').value,a=document.querySelector('#pw-again').value;if(n!==a)throw new Error('New passwords do not match');await post('/api/system/password',{Current:cur,New:n});toast('Password changed');model.localMixer=null;model.localAudio=null;model.minRevision=0;model.locked=true;model.state=null;closeEvents();render();return}
     if(action==='diag-refresh'){await loadDiagnostics();render();return}
+    if(action==='doctor-run'){await runDoctor();return}
+    if(action==='doctor-fix-all'){const n=model.doctor?.fixable||0;if(!confirm(`Apply ${n} fix${n===1?'':'es'}? Services may be started and Bluetooth settings saved; fixes that become possible along the way, such as powering on the adapter once Bluetooth runs, are applied too. Bluetooth itself is not restarted.`))return;await runDoctor({all:true});return}
+    if(action.startsWith('doctor-fix:')){await runDoctor({ids:[action.slice('doctor-fix:'.length)]});return}
     if(action==='diag-copy'){await navigator.clipboard.writeText(JSON.stringify({system:model.state.system,wifi:model.state.wifi,health:model.state.health,devices:model.state.devices.filter(x=>x.role||x.connected),diagnostics:model.diagnostics},null,2));toast('Diagnostics copied');return}
   }catch(x){toast(x.message,'error')}
 });

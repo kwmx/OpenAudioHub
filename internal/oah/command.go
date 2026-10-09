@@ -10,9 +10,16 @@ import (
 	"time"
 )
 
-type runner struct{}
+// runner executes system commands. fake, when set, replaces execution so tests
+// can script command output; the zero value runs real commands.
+type runner struct {
+	fake func(name string, args ...string) (string, error)
+}
 
-func (runner) Run(timeout time.Duration, name string, args ...string) (string, error) {
+func (r runner) Run(timeout time.Duration, name string, args ...string) (string, error) {
+	if r.fake != nil {
+		return r.fake(name, args...)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)

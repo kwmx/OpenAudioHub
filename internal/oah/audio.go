@@ -268,11 +268,43 @@ func (a *App) reconcileRoutes(reason string) {
 			outputOrder = append(outputOrder, addr)
 		}
 	}
+	// A source paired while pairing mode is on (a Windows PC or phone added from
+	// its own Bluetooth settings) connects straight away, before anyone has had a
+	// chance to give it a role. Disconnecting it below made pairing look broken.
+	// Give a never-assigned source the first free input instead. Devices the user
+	// has assigned before have a DevicePrefs entry and are left to the user.
+	if a.pairingActive() {
+		var adopt []string
+		for _, t := range transports {
+			addr := strings.ToUpper(t.Addr)
+			if strings.Contains(t.UUID, "Audio Sink") && addr != "" && !assignedInputs[addr] {
+				if _, known := c.DevicePrefs[addr]; !known && !contains(adopt, addr) {
+					adopt = append(adopt, addr)
+				}
+			}
+		}
+		for _, addr := range adopt {
+			slot := -1
+			err := a.cfg.Update(func(n *Config) error {
+				slot = adoptIntoFreeInput(n, addr)
+				return nil
+			})
+			if err != nil || slot < 0 {
+				continue
+			}
+			a.logf("assigned newly paired source %s to Input %d", addr, slot+1)
+			assignedInputs[addr] = true
+		}
+		if len(adopt) > 0 {
+			c = a.cfg.Get()
+		}
+	}
 	for _, t := range transports {
 		addr := strings.ToUpper(t.Addr)
 		switch {
 		case strings.Contains(t.UUID, "Audio Sink") && addr != "" && !assignedInputs[addr]:
 			a.logf("disconnecting unassigned A2DP source %s to free input SEP", addr)
+			a.notePoliced(addr, now)
 			_, _ = a.run.Run(6*time.Second, "bluetoothctl", "disconnect", addr)
 			delete(connected, addr)
 			delete(inputMedia, addr)
@@ -377,7 +409,12 @@ func (a *App) reconcileRoutes(reason string) {
 	// Once a session is healthy, endpoints are long-lived. This is the crucial
 	// difference from 0.1.3: periodic reconcile never disconnects a source or
 	// restarts BlueALSA just to maintain logical slot order.
-	if len(inputs) > 1 {
+	//
+	// While pairing mode is on and an input slot is free, also offer BlueALSA's
+	// endpoints. With one input assigned only PipeWire's single sink endpoint
+	// exists, and once that source holds it a newly pairing source is refused
+	// as busy before it can ever be assigned.
+	if len(inputs) > 1 || (a.pairingActive() && len(inputs) < maxInputs && connectedInputs > 0) {
 		_, _ = a.run.Run(8*time.Second, "systemctl", "start", "openaudiohub-bluealsa.service")
 		_, _ = a.run.Run(8*time.Second, "systemctl", "start", "openaudiohub-bluealsa-bridge.service")
 	}
@@ -401,6 +438,55 @@ func (a *App) reconcileRoutes(reason string) {
 
 	a.applyMixer()
 	a.signalRefresh()
+}
+
+// adoptIntoFreeInput puts addr in the first empty input slot of c and enables
+// auto-connect for it. It returns the slot index, or -1 when every slot is taken.
+func adoptIntoFreeInput(c *Config, addr string) int {
+	for _, x := range c.Slots.Inputs {
+		if strings.EqualFold(x, addr) {
+			return -1
+		}
+	}
+	for i, x := range c.Slots.Inputs {
+		if x == "" {
+			c.Slots.Inputs[i] = addr
+			if c.DevicePrefs == nil {
+				c.DevicePrefs = map[string]DevicePrefs{}
+			}
+			c.DevicePrefs[addr] = DevicePrefs{AutoConnect: true}
+			return i
+		}
+	}
+	return -1
+}
+
+func (a *App) notePoliced(addr string, now time.Time) {
+	a.policedMu.Lock()
+	defer a.policedMu.Unlock()
+	if a.policed == nil {
+		a.policed = map[string]time.Time{}
+	}
+	a.policed[addr] = now
+}
+
+// recentlyPoliced reports whether reconcile disconnected addr for being
+// unassigned in the last few minutes.
+func (a *App) recentlyPoliced(addr string, now time.Time) bool {
+	a.policedMu.Lock()
+	defer a.policedMu.Unlock()
+	at, ok := a.policed[addr]
+	if ok && now.Sub(at) > 10*time.Minute {
+		delete(a.policed, addr)
+		return false
+	}
+	return ok
+}
+
+func (a *App) clearPoliced(addr string) {
+	a.policedMu.Lock()
+	defer a.policedMu.Unlock()
+	delete(a.policed, addr)
 }
 
 func (a *App) routeSupervisor() {
@@ -475,8 +561,13 @@ func (a *App) applyMixer() {
 	}
 }
 
+// dbToPercent converts a gain in dB to a pactl volume percentage. pactl
+// percentages are on the PulseAudio volume scale, which is cubic in amplitude
+// (pa_sw_volume_from_linear), and pipewire-pulse uses the same mapping. Treating
+// the percentage as linear amplitude made every dB value three times as strong:
+// the default -6 dB headroom actually attenuated by about 18 dB.
 func dbToPercent(db float64) int {
-	p := int(100*math.Pow(10, db/20) + 0.5)
+	p := int(100*math.Pow(10, db/60) + 0.5)
 	if p < 0 {
 		p = 0
 	}

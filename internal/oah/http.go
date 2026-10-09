@@ -45,6 +45,8 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/system/update", a.requireAuth(a.handleUpdateCheck))
 	mux.HandleFunc("POST /api/system/update", a.requireAuth(a.handleUpdateApply))
 	mux.HandleFunc("GET /api/diagnostics", a.requireAuth(a.handleDiagnostics))
+	mux.HandleFunc("GET /api/doctor", a.requireAuth(a.handleDoctor))
+	mux.HandleFunc("POST /api/doctor/fix", a.requireAuth(a.handleDoctorFix))
 
 	webRoot := os.Getenv("OPENAUDIOHUB_WEB")
 	if webRoot == "" {
@@ -95,11 +97,21 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "invalid request"})
 		return
 	}
+	client := clientKey(r)
+	if wait := a.loginLimit.retryAfter(client, time.Now()); wait > 0 {
+		secs := int((wait + time.Second - 1) / time.Second)
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": fmt.Sprintf("Too many incorrect passwords. Try again in %d seconds.", secs)})
+		return
+	}
 	if !verifyPassword(a.cfg.Get(), q.Password) {
+		a.loginLimit.fail(client, time.Now())
+		a.logf("sign-in failed from %s", client)
 		time.Sleep(350 * time.Millisecond)
 		writeJSON(w, 401, map[string]string{"error": "Incorrect password"})
 		return
 	}
+	a.loginLimit.succeed(client)
 	// Normal sessions last a week. "Stay signed in" is deliberately long for a
 	// local appliance and survives daemon restarts/reboots because the cookie is
 	// stateless and HMAC-signed.
@@ -110,7 +122,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		maxAge = 90 * 24 * 3600
 	}
 	token := mintSessionToken(a.cfg.Get(), exp)
-	http.SetCookie(w, &http.Cookie{Name: "oah_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Expires: exp})
+	http.SetCookie(w, &http.Cookie{Name: "oah_session", Value: token, Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: maxAge, Expires: exp})
 	writeJSON(w, 200, map[string]any{"ok": true, "revision": a.cfg.Get().Revision})
 }
 func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +140,35 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, a.buildState(true))
+}
+
+func (a *App) handleDoctor(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, a.runDoctor(nil))
+}
+
+// handleDoctorFix applies the fixes named in ids, or every available fix when
+// all is set, and returns the report from the checks run afterwards.
+func (a *App) handleDoctorFix(w http.ResponseWriter, r *http.Request) {
+	var q struct {
+		IDs []string `json:"ids"`
+		All bool     `json:"all"`
+	}
+	if err := decodeJSON(r, &q); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid request"})
+		return
+	}
+	ids := map[string]bool{}
+	if q.All {
+		ids["*"] = true
+	}
+	for _, id := range q.IDs {
+		ids[id] = true
+	}
+	if len(ids) == 0 {
+		writeJSON(w, 400, map[string]string{"error": "choose at least one fix"})
+		return
+	}
+	writeJSON(w, 200, a.runDoctor(ids))
 }
 
 func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -253,6 +294,14 @@ func (a *App) handleBTRole(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil && oldOccupant != "" && !strings.EqualFold(oldOccupant, q.Addr) {
 		_, _ = a.run.Run(6*time.Second, "bluetoothctl", "disconnect", oldOccupant)
+	}
+	if err == nil && q.Role != "" {
+		// A device that paired from its own side (Windows, most phones) is bonded
+		// but not trusted, so each reconnect needs the agent to authorize every
+		// profile and fails whenever the agent is restarting. An assigned device
+		// is one the user wants back automatically.
+		_, _ = a.run.Run(5*time.Second, "bluetoothctl", "trust", q.Addr)
+		a.clearPoliced(q.Addr)
 	}
 	a.btOpsMu.Unlock()
 	if err != nil {
@@ -488,9 +537,9 @@ func (a *App) handleRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer zr.Close()
-	// Report what actually happened. Silently ignoring a bad member and still
-	// answering 202 told the user a restore succeeded when nothing was applied.
-	applied := 0
+	// Read both members first and validate them before touching anything, so a
+	// bad backup cannot leave the hub half-restored.
+	members := map[string][]byte{}
 	for _, f := range zr.File {
 		if f.Name != "config.json" && f.Name != "audio.json" {
 			continue
@@ -506,32 +555,58 @@ func (a *App) handleRestore(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, map[string]string{"error": "backup is corrupt"})
 			return
 		}
-		if f.Name == "config.json" {
-			var c Config
-			if err := json.Unmarshal(b, &c); err != nil {
-				writeJSON(w, 400, map[string]string{"error": "backup contains an unreadable config.json"})
-				return
-			}
-			if err := a.cfg.Replace(c); err != nil {
-				a.writeProblem(w, 500, "The backup could not be applied. Existing settings were kept.", "restore config", err)
-				return
-			}
-			applied++
-			continue
-		}
-		if err := os.WriteFile("/etc/openaudiohub/audio.json", b, 0644); err != nil {
-			a.writeProblem(w, 500, "The backup could not be applied. Existing settings were kept.", "restore audio", err)
-			return
-		}
-		applied++
+		members[f.Name] = b
 	}
-	if applied == 0 {
+	if len(members) == 0 {
 		writeJSON(w, 400, map[string]string{"error": "backup contains no config.json or audio.json"})
 		return
 	}
-	a.requestReconcile("configuration restored")
+	cur := a.cfg.Get()
+	next := cur
+	if b, ok := members["config.json"]; ok {
+		next = defaultConfig()
+		if err := json.Unmarshal(b, &next); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "backup contains an unreadable config.json"})
+			return
+		}
+		// A backup without credentials would leave a hub nobody can sign in to.
+		if next.PasswordHash == "" || next.PasswordSalt == "" {
+			next.PasswordHash, next.PasswordSalt = cur.PasswordHash, cur.PasswordSalt
+		}
+		// The audio session user belongs to this installation, not to the hub the
+		// backup came from; restoring another board's user breaks every pactl call.
+		next.AudioUser, next.AudioUID = cur.AudioUser, cur.AudioUID
+	} else {
+		// Older backups may carry only the audio projection. Apply it through the
+		// config so the two can never disagree.
+		audio := cur.Audio
+		if err := json.Unmarshal(members["audio.json"], &audio); err != nil {
+			writeJSON(w, 400, map[string]string{"error": "backup contains an unreadable audio.json"})
+			return
+		}
+		next.Audio = audio
+	}
+	if err := validateReceiverOptions(next.Audio); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "backup audio settings are invalid: " + err.Error()})
+		return
+	}
+	a.audioConfigMu.Lock()
+	err = a.cfg.Replace(next)
+	if err == nil {
+		// audio.json is derived from config.json; regenerate it rather than
+		// trusting the copy in the archive.
+		err = a.writeAudioProjection(a.cfg.Get().Audio)
+	}
+	a.audioConfigMu.Unlock()
+	if err != nil {
+		a.writeProblem(w, 500, "The backup could not be fully applied. Check settings and Diagnostics.", "restore config", err)
+		return
+	}
+	// The audio graph reads rate, quantum and codec policy at start, so restart it
+	// for the restored values to take effect; this also queues a reconcile.
+	a.restartAudio()
 	a.signalRefresh()
-	writeJSON(w, 202, map[string]any{"ok": true, "revision": a.cfg.Get().Revision, "applied": applied})
+	writeJSON(w, 202, map[string]any{"ok": true, "revision": a.cfg.Get().Revision, "applied": len(members)})
 }
 
 func intParam(v string, def int) int {

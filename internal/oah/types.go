@@ -77,14 +77,17 @@ type Device struct {
 	Codec         string   `json:"codec,omitempty"`
 	Rate          int      `json:"rate,omitempty"`
 	Role          string   `json:"role,omitempty"`
-	Volume        int      `json:"volume,omitempty"`
-	VolumeKnown   bool     `json:"volumeKnown,omitempty"`
-	Muted         bool     `json:"muted,omitempty"`
-	LatencyMS     int      `json:"latencyMs,omitempty"`
-	Backend       string   `json:"backend,omitempty"`
+	// Volume is sent even when 0: omitting it made a muted device read as 100%.
+	Volume      int    `json:"volume"`
+	VolumeKnown bool   `json:"volumeKnown,omitempty"`
+	Muted       bool   `json:"muted,omitempty"`
+	LatencyMS   int    `json:"latencyMs,omitempty"`
+	Backend     string `json:"backend,omitempty"`
 	// Reason explains a status the user cannot act on otherwise, such as another
 	// output already holding the single A2DP source endpoint.
 	Reason string `json:"reason,omitempty"`
+	// unnamed marks a placeholder name, so real names sort first.
+	unnamed bool
 }
 
 type WiFiNetwork struct {

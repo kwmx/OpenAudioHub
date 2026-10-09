@@ -1,16 +1,21 @@
 package oah
 
 import (
-	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
 var macLikeNameRE = regexp.MustCompile(`(?i)^[0-9a-f]{2}([:_-]?[0-9a-f]{2}){5}$`)
+
+// propertyLineRE matches bluetoothctl property output such as "RSSI: -60" or
+// "ManufacturerData Key: 0x004c". Releases before 1.0.3 cached these from scan
+// output as device names.
+var propertyLineRE = regexp.MustCompile(`^(RSSI|TxPower|ManufacturerData|ServiceData|AdvertisingData|AdvertisingFlags|UUIDs?|Connected|Paired|Bonded|Trusted|Blocked|Class|Icon|Appearance|Modalias|ServicesResolved|LegacyPairing|WakeAllowed|CablePairing|Name|Alias|Key|Value)( Key| Value)?:`)
 
 func deviceNameCachePath(configPath string) string {
 	if v := strings.TrimSpace(os.Getenv("OPENAUDIOHUB_DEVICE_NAME_CACHE")); v != "" {
@@ -71,22 +76,31 @@ func (a *App) rememberDeviceName(addr, name string) {
 	}
 	path := a.deviceNamesPath
 	a.deviceNamesMu.Unlock()
+	_ = writeDeviceNameFile(path, copyMap)
+}
 
+// deviceNamesFileMu serializes writes of the name cache file; every writer uses
+// the same temporary file.
+var deviceNamesFileMu sync.Mutex
+
+func writeDeviceNameFile(path string, names map[string]string) error {
 	if path == "" {
-		return
+		return nil
 	}
+	deviceNamesFileMu.Lock()
+	defer deviceNamesFileMu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return
+		return err
 	}
-	b, err := json.MarshalIndent(copyMap, "", "  ")
+	b, err := json.MarshalIndent(names, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
-		return
+		return err
 	}
-	_ = os.Rename(tmp, path)
+	return os.Rename(tmp, path)
 }
 
 func usableBluetoothName(name, addr string) bool {
@@ -98,7 +112,7 @@ func usableBluetoothName(name, addr string) bool {
 	if low == "unknown" || low == "unknown device" || low == "n/a" || low == "none" || strings.HasPrefix(low, "unnamed device") {
 		return false
 	}
-	if macLikeNameRE.MatchString(name) {
+	if macLikeNameRE.MatchString(name) || propertyLineRE.MatchString(name) {
 		return false
 	}
 	compact := strings.NewReplacer(":", "", "-", "", "_", "", " ", "").Replace(strings.ToUpper(name))
@@ -112,40 +126,18 @@ func usableBluetoothName(name, addr string) bool {
 	return true
 }
 
-// bluezStoredNames reads BlueZ's persistent Device1 cache. It is a fallback
-// only: discovery/Device1 properties are preferred, but the cache often keeps
-// the original remote name after a device's Alias later degrades to a MAC-like
-// value.
+// bluezStoredNames reads BlueZ's persistent storage. It is a fallback only:
+// discovery/Device1 properties are preferred, but storage often keeps the original
+// remote name after a device's Alias later degrades to a MAC-like value, and the
+// name cache remembers devices that are nearby but not currently named.
 func bluezStoredNames(addr string) []string {
 	addr = cleanAddr(addr)
 	if addr == "" {
 		return nil
 	}
-	paths, _ := filepath.Glob(filepath.Join("/var/lib/bluetooth", "*", addr, "info"))
 	out := []string{}
-	for _, p := range paths {
-		f, err := os.Open(p)
-		if err != nil {
-			continue
-		}
-		sc := bufio.NewScanner(f)
-		section := ""
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
-			if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-				section = strings.Trim(line, "[]")
-				continue
-			}
-			if section != "General" {
-				continue
-			}
-			if k, v, ok := strings.Cut(line, "="); ok {
-				if (k == "Alias" || k == "Name") && usableBluetoothName(v, addr) {
-					out = append(out, strings.TrimSpace(v))
-				}
-			}
-		}
-		_ = f.Close()
+	for _, p := range bluezNameCachePaths("/var/lib/bluetooth", addr) {
+		out = append(out, readBluezNameCache(p, addr)...)
 	}
 	return out
 }

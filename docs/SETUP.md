@@ -1,4 +1,4 @@
-# Setup and upgrade: OpenAudioHub 1.0.2
+# Setup and upgrade: OpenAudioHub 1.0.3
 
 This is not a hardware-qualified appliance image.
 Read `VALIDATION.md` and complete the acceptance checks below before relying on
@@ -9,9 +9,9 @@ it. Keep any existing working setup until the cold-boot and playback checks pass
 Use a **new folder** rather than mixing files from previous versions:
 
 ```bash
-mkdir -p ~/openaudiohub-upgrades/1.0.2
-unzip OpenAudioHub-1.0.2.zip -d ~/openaudiohub-upgrades/1.0.2
-cd ~/openaudiohub-upgrades/1.0.2/OpenAudioHub
+mkdir -p ~/openaudiohub-upgrades/1.0.3
+unzip OpenAudioHub-1.0.3.zip -d ~/openaudiohub-upgrades/1.0.3
+cd ~/openaudiohub-upgrades/1.0.3/OpenAudioHub
 ```
 
 The ZIP contains the full source, scripts, frontend, test report, and ARM64/AMD64
@@ -77,7 +77,7 @@ systemctl --user status openaudiohub-bluealsa-aplay.service --no-pager
 sudo stat -c '%a %U:%G %n' /etc/openaudiohub/{config,audio}.json
 ```
 
-Expected daemon version: `1.0.2`. The legacy **user** `bluealsa-aplay` service
+Expected daemon version: `1.0.3`. The legacy **user** `bluealsa-aplay` service
 should be absent/inactive. The managed player may wait for an assigned receiver.
 `config.json` must stay `600 root:root`; `audio.json` is the non-secret `644`
 projection used by the unprivileged bridge. Do not chmod the private file to 644.
@@ -117,6 +117,31 @@ For the known 44.1 kHz joint-stereo configuration and max 35 this should be
 `21 15 02 23`. The final byte `23` is hexadecimal 35. The decoded **frame** bitpool
 may be lower than the negotiated maximum; these are distinct quantities.
 A disconnected Mac has no PCM object, so that query cannot succeed then.
+
+### Connecting a Windows PC
+
+Pair from Windows, not from the hub:
+
+1. In the hub's **Devices** screen, turn on **Pairing mode**.
+2. On Windows, open **Settings → Bluetooth & devices → Add device → Bluetooth**
+   and choose the hub. It appears as a speaker.
+3. While pairing mode is on, a source that has never been assigned is put in the
+   first free input automatically, and the hub opens a spare input endpoint if
+   your phone already holds Input 1. Outside pairing mode an unassigned source is
+   disconnected; its card says so. Assign it to an input and press **Connect**.
+
+If Windows says it cannot connect after you removed the hub on one side, turn
+on pairing mode, remove the hub in Windows, and add it again. Re-pairing a known
+device is accepted only while pairing mode is on.
+
+The installer sets these in `/etc/bluetooth/main.conf`. They apply after the
+next reboot or `sudo systemctl restart bluetooth`, which drops every audio link:
+
+| Setting | Why |
+|---|---|
+| `FastConnectable = true` | PCs and phones connecting to the hub succeed on the first attempt. |
+| `JustWorksRepairing = confirm` | A device that lost its pairing can pair again; the agent allows it only in pairing mode. |
+| `TemporaryTimeout = 300` | Scanned devices stay listed for five minutes rather than 30 seconds. |
 
 ## 5. A/V synchronization (experimental)
 
@@ -205,6 +230,25 @@ Reload the page after upgrading. Source files are served with `Cache-Control:
 no-cache` so the browser revalidates the application scripts.
 
 ## Recovery
+
+Start with the doctor. In the web interface it is at the top of **Diagnostics**.
+Over SSH, when the web interface itself is down:
+
+```bash
+sudo openaudiohubd --doctor          # report only
+sudo openaudiohubd --doctor --fix    # apply every available fix
+```
+
+It checks the Bluetooth service, adapter, name, pairing helper, `main.conf`
+settings, pairing mode, assigned devices, reconnect backoff, saved device names,
+PipeWire, conflicting Debian BlueALSA services, the extra-input receiver,
+`audio.json`, free storage and the Wi-Fi band. Fixes start or restart the
+affected service, rewrite the affected file, or shrink the system journal. No fix
+restarts `bluetooth.service`: changes to `main.conf` apply after the next reboot.
+The command exits with status 1 while problems remain. Pairing mode and reconnect
+backoff live in the running daemon, so only the web interface checks them.
+
+If the doctor cannot fix it, use the manual steps below.
 
 Do not rerun the old broken installer merely to recover a manual experiment.
 Stop only the managed secondary stack and web supervisor before manual work:

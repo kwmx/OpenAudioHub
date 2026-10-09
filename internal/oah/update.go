@@ -90,12 +90,15 @@ func compareVersions(a, b string) int {
 }
 
 var (
-	updateMu     sync.Mutex
-	updateState  UpdateStatus
-	updateRanAt  time.Time
-	updateRun    bool
-	updateNotice string
+	updateMu      sync.Mutex
+	updateState   UpdateStatus
+	updateRun     bool
+	updateStarted time.Time
 )
+
+// updateStartGrace covers the time between marking an update as running and
+// systemd-run creating its unit, when the unit does not exist yet.
+const updateStartGrace = time.Minute
 
 func getenv(k string) string { return os.Getenv(k) }
 
@@ -155,15 +158,25 @@ func (a *App) checkLatestRelease() UpdateStatus {
 	return st
 }
 
-func (a *App) updateStatus() UpdateStatus {
-	updateMu.Lock()
-	defer updateMu.Unlock()
-	st := updateState
-	st.Running = updateRun
-	if st.Current == "" {
-		st.Current = a.version
+// updateRunningLocked reports whether an update started by this daemon is still
+// in progress. The caller must hold updateMu. A successful install restarts the
+// daemon and clears the flag that way; a failed one leaves the daemon running, so
+// the flag is cleared once the transient unit is gone or the user could never
+// retry without restarting the hub by hand.
+func (a *App) updateRunningLocked() bool {
+	if !updateRun {
+		return false
 	}
-	return st
+	if time.Since(updateStarted) < updateStartGrace {
+		return true
+	}
+	out, _ := a.run.Run(3*time.Second, "systemctl", "is-active", updateUnit+".service")
+	switch strings.TrimSpace(out) {
+	case "active", "activating", "reloading":
+		return true
+	}
+	updateRun = false
+	return false
 }
 
 // handleUpdateCheck performs the GitHub lookup on demand rather than on every
@@ -172,7 +185,7 @@ func (a *App) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	st := a.checkLatestRelease()
 	updateMu.Lock()
 	updateState = st
-	updateRanAt = time.Now()
+	st.Running = a.updateRunningLocked()
 	updateMu.Unlock()
 	writeJSON(w, 200, st)
 }
@@ -182,7 +195,7 @@ func (a *App) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 // so the daemon never rewrites its own binary while executing.
 func (a *App) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	updateMu.Lock()
-	if updateRun {
+	if a.updateRunningLocked() {
 		updateMu.Unlock()
 		writeJSON(w, 409, map[string]string{"error": "An update is already running."})
 		return
@@ -194,6 +207,7 @@ func (a *App) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updateRun = true
+	updateStarted = time.Now()
 	updateMu.Unlock()
 
 	// The installer stops this service. Running update.sh as a child of this unit
@@ -209,15 +223,13 @@ func (a *App) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		"/usr/local/lib/openaudiohub/update.sh", "install", st.Latest); err != nil {
 		updateMu.Lock()
 		updateRun = false
-		updateNotice = "The update could not be started. Inspect Diagnostics."
 		updateMu.Unlock()
-		a.logf("update failed to start: %v", err)
 		a.signalRefresh()
+		// Without a response here the client received an empty 200 and reported
+		// that the update was installing when nothing had started.
+		a.writeProblem(w, 500, "The update could not be started. Inspect Diagnostics.", "start update", err)
 		return
 	}
-	updateMu.Lock()
-	updateNotice = "Installing " + st.Latest + ". The hub restarts itself; this page will reconnect."
-	updateMu.Unlock()
 	a.signalRefresh()
 
 	writeJSON(w, 202, map[string]any{"ok": true, "installing": st.Latest})

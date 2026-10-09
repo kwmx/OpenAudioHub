@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then echo "Run gofmt on:"; echo "$unformatted"; exit 1; fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test (race detector)
+        run: go test -race ./...
+
+      - name: Cross-compile release targets
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/openaudiohubd
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /dev/null ./cmd/openaudiohubd
+
+      - name: Shell and Python syntax
+        run: |
+          for f in scripts/*.sh packaging/scripts/*.sh; do bash -n "$f"; done
+          python3 -m py_compile packaging/scripts/*.py patches/*.py
+
+      - name: JavaScript syntax
+        run: |
+          node --check web/app.js
+          node --input-type=module --check < web/dom-sync.js
+
+      - name: Runtime tests
+        run: python3 -m unittest tests.test_runtime
+
+      - name: Browser regression tests
+        run: |
+          pip install --quiet playwright
+          python3 -m playwright install --with-deps chromium
+          python3 -m unittest tests.browser_regression
+
+      # The installer and the in-app updater install the committed binaries in
+      # release/, so they must be rebuilt (make release) whenever VERSION changes.
+      - name: Committed release binaries match VERSION
+        run: |
+          want="$(sed -n 's/^VERSION ?= //p' Makefile)"
+          got="$(./release/openaudiohubd-linux-amd64 --version)"
+          echo "Makefile VERSION=$want, release/openaudiohubd-linux-amd64 reports $got"
+          [ "$got" = "$want" ] || { echo "Run 'make release' and commit release/."; exit 1; }
+          file release/openaudiohubd-linux-arm64 | grep -q 'ARM aarch64'
