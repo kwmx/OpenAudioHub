@@ -10,17 +10,21 @@ import (
 func writeBluetoothMainConfName(name string) error {
 	p := "/etc/bluetooth/main.conf"
 	b, _ := os.ReadFile(p)
-	s := string(b)
+	return os.WriteFile(p, []byte(setMainConfName(string(b), name)), 0644)
+}
+
+// [ \t] rather than \s: \s also matches newlines, so the pattern swallowed any
+// blank lines above the key.
+var mainConfNameRE = regexp.MustCompile(`(?m)^[ \t]*#?[ \t]*Name[ \t]*=.*$`)
+
+func setMainConfName(s, name string) string {
 	if !strings.Contains(s, "[General]") {
 		s = "[General]\n" + s
 	}
-	re := regexp.MustCompile(`(?m)^\s*#?\s*Name\s*=.*$`)
-	if re.MatchString(s) {
-		s = re.ReplaceAllStringFunc(s, func(string) string { return "Name = " + name })
-	} else {
-		s = strings.Replace(s, "[General]", "[General]\nName = "+name, 1)
+	if mainConfNameRE.MatchString(s) {
+		return mainConfNameRE.ReplaceAllStringFunc(s, func(string) string { return "Name = " + name })
 	}
-	return os.WriteFile(p, []byte(s), 0644)
+	return strings.Replace(s, "[General]", "[General]\nName = "+name, 1)
 }
 
 func (a *App) setBluetoothAlias(name string) error {

@@ -475,8 +475,13 @@ func (a *App) applyMixer() {
 	}
 }
 
+// dbToPercent converts a gain in dB to a pactl volume percentage. pactl
+// percentages are on the PulseAudio volume scale, which is cubic in amplitude
+// (pa_sw_volume_from_linear), and pipewire-pulse uses the same mapping. Treating
+// the percentage as linear amplitude made every dB value three times as strong:
+// the default -6 dB headroom actually attenuated by about 18 dB.
 func dbToPercent(db float64) int {
-	p := int(100*math.Pow(10, db/20) + 0.5)
+	p := int(100*math.Pow(10, db/60) + 0.5)
 	if p < 0 {
 		p = 0
 	}

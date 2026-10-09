@@ -125,7 +125,23 @@ func (a *App) scanWiFi() []WiFiNetwork {
 	return list
 }
 
+// networkRollbackDelay is how long a network change has to be confirmed before
+// the previous netplan configuration is restored.
+const networkRollbackDelay = 60 * time.Second
+
+// networkApplyPending reports whether ap still has a rollback armed or running.
+// A few seconds of slack covers the rollback's own netplan apply.
+func networkApplyPending(ap *NetworkApply, now time.Time) bool {
+	if ap.State == "ok" {
+		return false
+	}
+	return now.Before(ap.StartedAt.Add(networkRollbackDelay + 30*time.Second))
+}
+
 func bandForFreq(f int) string {
+	if f >= 5925 {
+		return "6 GHz"
+	}
 	if f >= 4900 {
 		return "5 GHz"
 	}
@@ -140,6 +156,9 @@ func channelForFreq(f int) int {
 	}
 	if f >= 2412 && f <= 2472 {
 		return (f - 2407) / 5
+	}
+	if f >= 5955 && f <= 7115 {
+		return (f - 5950) / 5
 	}
 	if f >= 5000 {
 		return (f - 5000) / 5
@@ -165,6 +184,16 @@ func (a *App) startNetworkApply(ssid, password, bssid, band string) (*NetworkApp
 	}
 	if band != "" && band != "5GHz" && band != "2.4GHz" {
 		return nil, fmtErr("invalid Wi-Fi band")
+	}
+	// Each apply snapshots the current netplan files and arms a rollback to them.
+	// A second apply while one is pending would snapshot the first's unconfirmed
+	// files, and the two rollbacks would then fight: the first restores the
+	// original network, and the second later restores the unconfirmed one.
+	a.mu.RLock()
+	pending := a.networkApply != nil && networkApplyPending(a.networkApply, time.Now())
+	a.mu.RUnlock()
+	if pending {
+		return nil, fmtErr("another network change is still pending; confirm it or wait for the rollback to finish")
 	}
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
 	backup := filepath.Join("/var/lib/openaudiohub/netplan-backups", id)
@@ -197,7 +226,7 @@ func (a *App) startNetworkApply(ssid, password, bssid, band string) (*NetworkApp
 		return nil, err
 	}
 	// Rollback is scheduled before the disruptive apply. Confirming cancels it.
-	rollbackScript := fmt.Sprintf("sleep 60; rm -f /etc/netplan/*.yaml /etc/netplan/*.yml; cp %s/* /etc/netplan/ 2>/dev/null || true; netplan generate && netplan apply", quoteShell(backup))
+	rollbackScript := fmt.Sprintf("sleep %d; rm -f /etc/netplan/*.yaml /etc/netplan/*.yml; cp %s/* /etc/netplan/ 2>/dev/null || true; netplan generate && netplan apply", int(networkRollbackDelay/time.Second), quoteShell(backup))
 	unit := "openaudiohub-netplan-rollback-" + id
 	if _, err := a.run.Run(5*time.Second, "systemd-run", "--unit", unit, "/bin/bash", "-lc", rollbackScript); err != nil {
 		return nil, err
@@ -232,6 +261,11 @@ func (a *App) confirmNetworkApply(id string) error {
 	defer a.mu.Unlock()
 	if a.networkApply == nil || a.networkApply.ID != id {
 		return fmtErr("network apply not found")
+	}
+	// A failed apply must roll back; confirming it would cancel the only thing
+	// that restores a working network.
+	if a.networkApply.State == "rolledback" {
+		return fmtErr("this network change failed and is being rolled back")
 	}
 	unit := "openaudiohub-netplan-rollback-" + id + ".service"
 	_, _ = a.run.Run(4*time.Second, "systemctl", "stop", unit)

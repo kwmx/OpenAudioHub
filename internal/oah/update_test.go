@@ -1,6 +1,10 @@
 package oah
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 // Pre-release ordering matters here: an rc must not look newer than the release
 // it precedes, or the hub would offer a downgrade as an upgrade.
@@ -48,11 +52,15 @@ func TestUpdateApplyRefusesWithoutAKnownRelease(t *testing.T) {
 	updateState = UpdateStatus{Current: "0.1.6-rc1", Checked: false}
 	updateRun = false
 	updateMu.Unlock()
-	st := a.updateStatus()
-	if st.Available {
-		t.Fatal("status should not offer an update before a check has run")
+	rec := httptest.NewRecorder()
+	a.handleUpdateApply(rec, httptest.NewRequest("POST", "/api/system/update", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409", rec.Code)
 	}
-	if st.Current != "0.1.6-rc1" && st.Current != "" {
-		t.Fatalf("unexpected current %q", st.Current)
+	updateMu.Lock()
+	running := updateRun
+	updateMu.Unlock()
+	if running {
+		t.Fatal("a refused update must not be marked as running")
 	}
 }

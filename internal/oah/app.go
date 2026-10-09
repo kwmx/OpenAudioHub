@@ -1,6 +1,7 @@
 package oah
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -12,10 +13,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -50,7 +53,8 @@ type App struct {
 	logMu           sync.Mutex
 	logs            []string
 
-	loginMu sync.Mutex
+	loginMu    sync.Mutex
+	loginLimit *loginLimiter
 
 	audioHealMu   sync.Mutex
 	audioLastHeal time.Time
@@ -67,7 +71,7 @@ func NewApp(configPath, version string) (*App, error) {
 		return nil, err
 	}
 	namePath := deviceNameCachePath(configPath)
-	a := &App{cfg: cfg, run: runner{}, version: version, listen: cfg.Get().Listen, deviceNames: loadDeviceNameCache(namePath), deviceNamesPath: namePath, deviceInfo: map[string]deviceInfoEntry{}, connectState: map[string]*connectState{}, sse: map[chan []byte]struct{}{}, refresh: make(chan struct{}, 1), reconcileReq: make(chan string, 1)}
+	a := &App{cfg: cfg, run: runner{}, version: version, listen: cfg.Get().Listen, deviceNames: loadDeviceNameCache(namePath), deviceNamesPath: namePath, deviceInfo: map[string]deviceInfoEntry{}, connectState: map[string]*connectState{}, loginLimit: newLoginLimiter(), sse: map[chan []byte]struct{}{}, refresh: make(chan struct{}, 1), reconcileReq: make(chan string, 1)}
 	return a, nil
 }
 func (a *App) SetListen(s string) { a.listen = s }
@@ -100,8 +104,27 @@ func (a *App) Run() error {
 	mux := http.NewServeMux()
 	a.routes(mux)
 	srv := &http.Server{Addr: a.listen, Handler: securityHeaders(a.recoverHTTP(mux)), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	// Shut down cleanly on SIGTERM/SIGINT so systemd restarts (including the
+	// one performed by an update) finish in-flight requests instead of cutting them.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	errc := make(chan error, 1)
+	go func() { errc <- srv.ListenAndServe() }()
 	a.logf("listening on %s", a.listen)
-	return srv.ListenAndServe()
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+	a.logf("shutting down")
+	// SSE streams never finish on their own; closing the listener and waiting a
+	// bounded time is enough for ordinary requests to complete.
+	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutCtx); err != nil && err != context.DeadlineExceeded {
+		return err
+	}
+	return nil
 }
 
 func (a *App) logf(format string, args ...any) {

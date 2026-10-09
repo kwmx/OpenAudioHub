@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/openaudiohub/openaudiohub/internal/oah"
 )
@@ -41,6 +40,4 @@ func main() {
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
-
-	_ = os.Stdout
 }

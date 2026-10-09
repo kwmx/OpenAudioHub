@@ -468,7 +468,17 @@ function openEvents(){
   const es=new EventSource('/events'); model.eventSource=es; model.realtime='connecting';
   es.onopen=()=>{model.realtime='connected'; if(model.state)render(true);};
   es.addEventListener('state',e=>{try{setState(JSON.parse(e.data));render(true)}catch(err){console.error('Ignored invalid state event',err)}});
-  es.onerror=()=>{model.realtime='reconnecting'; if(model.state)render(true);};
+  es.onerror=()=>{model.realtime='reconnecting'; if(model.state)render(true);
+    // The browser stops retrying after a 401 or a non-stream response. Start over
+    // through /api/state so an expired session reaches the lock screen.
+    if(es.readyState===EventSource.CLOSED&&model.eventSource===es){closeEvents();model.realtime='reconnecting';resyncEvents();}
+  };
+}
+function resyncEvents(){
+  setTimeout(()=>{
+    if(model.locked||model.eventSource)return;
+    api('/api/state').then(s=>{setState(s);openEvents();render(true)}).catch(()=>{if(!model.locked&&!model.eventSource)resyncEvents()});
+  },3000);
 }
 function closeEvents(){model.eventSource?.close();model.eventSource=null;model.realtime='connecting'}
 async function commitMixer(){
@@ -482,9 +492,11 @@ async function commitMixer(){
 }
 async function commitBTVolume(addr,value){
   const pending={value,acknowledged:false,until:Infinity};model.pendingVolumes[addr]=pending;
-  try { await post('/api/bluetooth/volume',{addr,volume:value});pending.acknowledged=true;pending.until=Date.now()+30000; }
+  let ok=false;
+  try { await post('/api/bluetooth/volume',{addr,volume:value});pending.acknowledged=true;pending.until=Date.now()+30000;ok=true; }
   catch(e){if(model.pendingVolumes[addr]===pending)delete model.pendingVolumes[addr];toast(e.message,'error');}
   if(model.pendingVolumes[addr]===pending || !model.pendingVolumes[addr])releaseControl(document.querySelector(`[data-bt-volume="${CSS.escape(addr)}"]`));render(true);
+  return ok;
 }
 
 app.addEventListener('change',async e=>{
@@ -526,24 +538,24 @@ app.addEventListener('input',e=>{
   if(e.target.id==='master-gain'){model.mixerDirty=true;model.mixerEdit++;model.localMixer.master=+e.target.value;document.querySelector('#master-output').textContent=`${e.target.value} dB`;}
   if(e.target.dataset.btVolume!==undefined){const addr=e.target.dataset.btVolume;const v=+e.target.value;model.pendingVolumes[addr]={value:v,acknowledged:false,until:Infinity};if(v>0)model.btVolumeMemory[addr]=v;const o=document.querySelector(`[data-bt-volume-output="${CSS.escape(addr)}"]`);if(o)o.textContent=`${v}%`;}
   if(e.target.dataset.bufferPair!==undefined){const [bp,bb]=e.target.value.split(':').map(Number);model.localAudio.bluealsaPeriodUs=bp;model.localAudio.bluealsaBufferUs=bb;model.localAudio.preset='custom';render();}
-  if(e.target.dataset.audio){const k=e.target.dataset.audio;model.localAudio[k]=e.target.type==='checkbox'?e.target.checked:(e.target.type==='number'||k==='preferredRate'||k==='secondarySbcMaxBitpool'?+e.target.value:e.target.value);model.localAudio.preset='custom';render();}
+  if(e.target.dataset.audio){const k=e.target.dataset.audio;model.localAudio[k]=e.target.type==='checkbox'?e.target.checked:(e.target.type==='number'||k==='preferredRate'||k==='secondarySbcMaxBitpool'?+e.target.value:e.target.value);if(k!=='secondaryAdvertisedDelayMs')model.localAudio.preset='custom';render();}
   if(e.target.dataset.rate){const n=+e.target.dataset.rate;model.localAudio.allowedRates=e.target.checked?[...new Set([...model.localAudio.allowedRates,n])]:model.localAudio.allowedRates.filter(x=>x!==n);model.localAudio.preset='custom';render();}
 });
 app.addEventListener('change',async e=>{
   if(e.target.dataset.mixGain!==undefined||e.target.id==='master-gain')await commitMixer();
   if(e.target.dataset.btVolume!==undefined)await commitBTVolume(e.target.dataset.btVolume,+e.target.value);
-  if(e.target.dataset.roleAddr){if(model.btBusy)return;model.btBusy=true;try{await post('/api/bluetooth/role',{addr:e.target.dataset.roleAddr,role:e.target.value});setState(await api('/api/state'));toast('Role updated')}catch(x){toast(x.message,'error')}finally{model.btBusy=false;render()}}
+  if(e.target.dataset.roleAddr){if(model.btBusy)return;model.btBusy=true;try{await post('/api/bluetooth/role',{addr:e.target.dataset.roleAddr,role:e.target.value});setState(await api('/api/state'));toast('Role updated')}catch(x){toast(x.message,'error')}finally{releaseControl(e.target);model.btBusy=false;render()}}
 });
 
 app.addEventListener('click',async e=>{
-  const r=e.target.closest('[data-route]')?.dataset.route;if(r){model.route=r;if(r==='Diagnostics'&&!model.diagnostics)loadDiagnostics();render();return}
+  const r=e.target.closest('[data-route]')?.dataset.route;if(r){model.route=r;if(r==='Diagnostics'&&!model.diagnostics)loadDiagnostics().then(()=>render(true));render();return}
   const p=e.target.closest('[data-place]')?.dataset.place;if(p){const[i,v]=p.split(':');model.localMixer.placement[+i]=v;render();await commitMixer();return}
   const mute=e.target.closest('[data-mute]')?.dataset.mute;if(mute!==undefined){const i=+mute;model.localMixer.mutes[i]=!model.localMixer.mutes[i];render();await commitMixer();return}
   const preset=e.target.closest('[data-preset]')?.dataset.preset;if(preset){model.localAudio={...model.localAudio,...presets[preset],liveMeters:model.localAudio.liveMeters};releaseControls(app);render();return}
   const bssid=e.target.closest('[data-wifi-select]')?.dataset.wifiSelect;if(bssid){model.joinBssid=model.joinBssid===bssid?'':bssid;render();return}
-  const join=e.target.closest('[data-wifi-join]')?.dataset.wifiJoin;if(join){const n=model.state.wifi.networks.find(x=>x.bssid===join);if(!n){model.joinBssid='';render();toast('The network list changed. Scan again.','error');return}try{await post('/api/network/join',{ssid:n.ssid,password:document.querySelector('#join-password')?.value||'',bssid:n.bssid,band:n.band==='5 GHz'?'5GHz':'2.4GHz'});toast('Switching Wi‑Fi. Reconnect if the page drops.')}catch(x){toast(x.message,'error')}return}
+  const join=e.target.closest('[data-wifi-join]')?.dataset.wifiJoin;if(join){const n=model.state.wifi.networks.find(x=>x.bssid===join);if(!n){model.joinBssid='';render();toast('The network list changed. Scan again.','error');return}try{await post('/api/network/join',{ssid:n.ssid,password:document.querySelector('#join-password')?.value||'',bssid:n.bssid,band:n.band==='5 GHz'?'5GHz':n.band==='2.4 GHz'?'2.4GHz':''});toast('Switching Wi‑Fi. Reconnect if the page drops.')}catch(x){toast(x.message,'error')}return}
   const btAuto=e.target.closest('[data-bt-auto]');if(btAuto){if(model.btBusy)return;model.btBusy=true;try{await post('/api/bluetooth/auto',{addr:btAuto.dataset.btAuto,enabled:btAuto.dataset.autoEnabled!=='1'});setState(await api('/api/state'));toast('Auto-connect updated')}catch(x){toast(x.message,'error')}finally{model.btBusy=false;render()}return}
-  const btMute=e.target.closest('[data-bt-mute]');if(btMute){const addr=btMute.dataset.btMute,d=getDevice(addr);if(!d?.connected)return;const current=Math.max(0,Math.min(100,model.pendingVolumes[addr]?.value??finite(d.volume,100)));if(current>0)model.btVolumeMemory[addr]=current;const target=current===0?(model.btVolumeMemory[addr]||70):0;try{await commitBTVolume(addr,target);render();toast(target===0?'Bluetooth audio muted':'Bluetooth audio unmuted')}catch(x){toast(x.message,'error')}return}
+  const btMute=e.target.closest('[data-bt-mute]');if(btMute){const addr=btMute.dataset.btMute,d=getDevice(addr);if(!d?.connected)return;const current=Math.max(0,Math.min(100,model.pendingVolumes[addr]?.value??finite(d.volume,100)));if(current>0)model.btVolumeMemory[addr]=current;const target=current===0?(model.btVolumeMemory[addr]||70):0;if(await commitBTVolume(addr,target))toast(target===0?'Bluetooth audio muted':'Bluetooth audio unmuted');return}
   const action=e.target.closest('[data-action]')?.dataset.action;if(!action)return;
   try{
     if(action==='noop')return;
@@ -570,7 +582,7 @@ app.addEventListener('click',async e=>{
     }
     if(action==='identity-save'){await post('/api/system/identity',{hostname:document.querySelector('#system-hostname').value,btName:document.querySelector('#system-btname').value});releaseControl(document.querySelector('#system-hostname'));releaseControl(document.querySelector('#system-btname'));toast('Identity update requested');return}
     if(action.startsWith('system:')){const act=action.split(':')[1];if(act==='reboot'&&!confirm('Reboot OpenAudioHub now?'))return;await post('/api/system/action',{action:act});toast(`${act} requested`);return}
-    if(action==='password-change'){const cur=document.querySelector('#pw-current').value,n=document.querySelector('#pw-new').value,a=document.querySelector('#pw-again').value;if(n!==a)throw new Error('New passwords do not match');await post('/api/system/password',{Current:cur,New:n});toast('Password changed');model.locked=true;model.state=null;closeEvents();render();return}
+    if(action==='password-change'){const cur=document.querySelector('#pw-current').value,n=document.querySelector('#pw-new').value,a=document.querySelector('#pw-again').value;if(n!==a)throw new Error('New passwords do not match');await post('/api/system/password',{Current:cur,New:n});toast('Password changed');model.localMixer=null;model.localAudio=null;model.minRevision=0;model.locked=true;model.state=null;closeEvents();render();return}
     if(action==='diag-refresh'){await loadDiagnostics();render();return}
     if(action==='diag-copy'){await navigator.clipboard.writeText(JSON.stringify({system:model.state.system,wifi:model.state.wifi,health:model.state.health,devices:model.state.devices.filter(x=>x.role||x.connected),diagnostics:model.diagnostics},null,2));toast('Diagnostics copied');return}
   }catch(x){toast(x.message,'error')}

@@ -77,7 +77,8 @@ type Device struct {
 	Codec         string   `json:"codec,omitempty"`
 	Rate          int      `json:"rate,omitempty"`
 	Role          string   `json:"role,omitempty"`
-	Volume        int      `json:"volume,omitempty"`
+	// Volume is sent even when 0: omitting it made a muted device read as 100%.
+	Volume        int      `json:"volume"`
 	VolumeKnown   bool     `json:"volumeKnown,omitempty"`
 	Muted         bool     `json:"muted,omitempty"`
 	LatencyMS     int      `json:"latencyMs,omitempty"`

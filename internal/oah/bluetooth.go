@@ -624,7 +624,7 @@ func (a *App) btAction(addr, action string) error {
 			case contains(caps, "sends_audio") && contains(caps, "plays_audio"):
 				return userErrorf("assign this device to an input or an output before connecting it")
 			case contains(caps, "sends_audio"):
-				return userErrorf("assign this device to Input 1 or Input 2 before connecting it")
+				return userErrorf("assign this device to an input before connecting it")
 			case contains(caps, "plays_audio"):
 				return userErrorf("assign this device to an output before connecting it")
 			default:
@@ -633,8 +633,8 @@ func (a *App) btAction(addr, action string) error {
 		}
 		args := []string{"connect", addr}
 		if strings.HasPrefix(role, "in") {
-			// There are exactly two local A2DP sink SEPs in the current engine:
-			// PipeWire + BlueALSA. A third source failing with EBUSY is capacity,
+			// The engine exposes maxInputs local A2DP sink SEPs (one PipeWire, the
+			// rest BlueALSA). A source failing with EBUSY beyond that is capacity,
 			// not a controller crash. Surface that clearly for UI-initiated connects.
 			occupied := 0
 			for _, t := range a.listTransports() {
@@ -642,8 +642,8 @@ func (a *App) btAction(addr, action string) error {
 					occupied++
 				}
 			}
-			if occupied >= 2 {
-				return userErrorf("both Bluetooth input endpoints are already occupied")
+			if occupied >= maxInputs {
+				return userErrorf("all %d Bluetooth input endpoints are already occupied", maxInputs)
 			}
 			args = append(args, "a2dp-source")
 		} else if strings.HasPrefix(role, "out") {
@@ -695,13 +695,13 @@ func (a *App) setPairing(enable bool) error {
 	} else {
 		_ = os.Remove("/run/openaudiohub/pairing-enabled")
 	}
+	var until time.Time
+	if enable {
+		until = time.Now().Add(time.Duration(a.cfg.Get().UI.PairingTimeoutSec) * time.Second)
+	}
 	a.mu.Lock()
 	a.pairing.Active = enable
-	if enable {
-		a.pairing.Until = time.Now().Add(time.Duration(a.cfg.Get().UI.PairingTimeoutSec) * time.Second)
-	} else {
-		a.pairing.Until = time.Time{}
-	}
+	a.pairing.Until = until
 	a.mu.Unlock()
 	if enable {
 		go func(until time.Time) {
@@ -713,7 +713,7 @@ func (a *App) setPairing(enable bool) error {
 				_ = a.setPairing(false)
 				a.signalRefresh()
 			}
-		}(a.pairing.Until)
+		}(until)
 	}
 	return nil
 }
