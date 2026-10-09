@@ -1,0 +1,40 @@
+name: Release
+
+# Push a tag such as v1.0.3 after committing the output of `make release`.
+# This publishes the GitHub release that hubs find through "Check for updates";
+# without a published release they never see the new version.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Tag matches VERSION and committed binaries
+        run: |
+          version="$(sed -n 's/^VERSION ?= //p' Makefile)"
+          tag="${GITHUB_REF_NAME#v}"
+          [ "$tag" = "$version" ] || { echo "Tag $GITHUB_REF_NAME does not match Makefile VERSION $version"; exit 1; }
+          got="$(./release/openaudiohubd-linux-amd64 --version)"
+          [ "$got" = "$version" ] || { echo "release/ binaries report $got; run 'make release' and commit them first"; exit 1; }
+
+      - name: Tests
+        run: go test ./...
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            release/openaudiohubd-linux-arm64 release/openaudiohubd-linux-amd64 \
+            --title "OpenAudioHub ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag

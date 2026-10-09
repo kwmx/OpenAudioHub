@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-c69a5b"></a>
-  <img alt="Version 1.0.2" src="https://img.shields.io/badge/version-1.0.2-c69a5b">
+  <img alt="Version 1.0.3" src="https://img.shields.io/badge/version-1.0.3-c69a5b">
   <img alt="Go 1.23 or later" src="https://img.shields.io/badge/Go-1.23%2B-c69a5b">
   <img alt="Platform: Linux arm64 and amd64" src="https://img.shields.io/badge/platform-linux%20arm64%20%7C%20amd64-c69a5b">
   <img alt="Debian trixie or Armbian" src="https://img.shields.io/badge/OS-Debian%20trixie%20%7C%20Armbian-c69a5b">
@@ -21,7 +21,7 @@ gain and ear placement, and send the result to **one** Bluetooth headset or
 speaker, all controlled from a local web page, with no cloud dependency.
 
 Reference target: **Orange Pi Zero 2W** running Armbian / Debian Trixie.
-Current version: **1.0.2**. See [Status](#status) for what is verified on hardware.
+Current version: **1.0.3**. See [Status](#status) for what is verified on hardware.
 
 ## What it does
 
@@ -283,6 +283,22 @@ python3 tests/test_runtime.py
 python3 tests/browser_regression.py   # needs Playwright and Chromium
 make release                          # cross-compile both daemon binaries
 ```
+
+GitHub Actions runs all of the above on every pull request (`.github/workflows/ci.yml`),
+and fails if the committed `release/` binaries do not report the Makefile `VERSION`.
+
+### Releasing
+
+The installer and the in-app updater install the binaries committed in
+`release/`, so a release is a commit plus a tag:
+
+1. Set `VERSION` in `Makefile` (and `scripts/install.sh`, README, `docs/SETUP.md`).
+2. `make release` and commit `release/`.
+3. Push a tag `v<VERSION>`, for example `git tag v1.0.3 && git push origin v1.0.3`.
+
+The release workflow (`.github/workflows/release.yml`) checks the tag against
+`VERSION` and the binaries, runs the tests, and publishes the GitHub release.
+Hubs only offer updates that have a published release.
 
 The web UI is plain ES modules under `web/` and has no build step. The daemon is
 standard-library Go under `cmd/` and `internal/oah/`. Packaging scripts, systemd
