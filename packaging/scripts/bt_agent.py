@@ -12,6 +12,14 @@ The opposite direction is deliberately not gated here: adding a headset or speak
 from the web UI discovers the device with Scan and pairs it through the daemon's
 own bluetoothctl invocation, so it works with pairing mode off. That is confirmed
 behaviour, not an oversight - do not add a pairing-mode check for it.
+
+Re-pairing a device that is already bonded (Windows after "Remove device", or a
+phone whose pairing was cleared on one side) reaches this agent because
+main.conf sets JustWorksRepairing = confirm. That replaces the stored key, so it
+is allowed only while pairing mode is on, never just because the address is known.
+
+A device that finishes pairing from its own side is marked Trusted, so later
+reconnects authorize without depending on this agent being up at that moment.
 """
 import os
 import dbus
@@ -34,17 +42,30 @@ class Agent(dbus.service.Object):
     def pairing_enabled(self):
         return os.path.exists(PAIRING_FLAG)
 
-    def device_known(self, path):
+    def device_flags(self, path):
         try:
             props = dbus.Interface(self.bus.get_object(BLUEZ, path), 'org.freedesktop.DBus.Properties')
-            paired = bool(props.Get('org.bluez.Device1', 'Paired'))
-            trusted = bool(props.Get('org.bluez.Device1', 'Trusted'))
-            return paired or trusted
+            return bool(props.Get('org.bluez.Device1', 'Paired')), bool(props.Get('org.bluez.Device1', 'Trusted'))
         except Exception:
-            return False
+            return False, False
+
+    def device_known(self, path):
+        paired, trusted = self.device_flags(path)
+        return paired or trusted
 
     def allow_new(self, device):
         if self.pairing_enabled() or self.device_known(device):
+            return
+        raise Rejected('OpenAudioHub pairing mode is disabled')
+
+    def allow_pairing(self, device):
+        """Pairing requests: like allow_new, but re-pairing a bonded device
+        replaces its key and therefore needs pairing mode."""
+        if self.pairing_enabled():
+            return
+        paired, trusted = self.device_flags(device)
+        if trusted and not paired:
+            # Trusted but never bonded: a pairing the hub itself started.
             return
         raise Rejected('OpenAudioHub pairing mode is disabled')
 
@@ -72,11 +93,11 @@ class Agent(dbus.service.Object):
 
     @dbus.service.method('org.bluez.Agent1', in_signature='ou', out_signature='')
     def RequestConfirmation(self, device, passkey):
-        self.allow_new(device)
+        self.allow_pairing(device)
 
     @dbus.service.method('org.bluez.Agent1', in_signature='o', out_signature='')
     def RequestAuthorization(self, device):
-        self.allow_new(device)
+        self.allow_pairing(device)
 
     @dbus.service.method('org.bluez.Agent1', in_signature='os', out_signature='')
     def AuthorizeService(self, device, uuid):
@@ -86,10 +107,26 @@ class Agent(dbus.service.Object):
     def Cancel(self):
         pass
 
+def trust_when_paired(bus):
+    def changed(interface, props, invalidated, path=None):
+        if interface != 'org.bluez.Device1' or not path:
+            return
+        if not (props.get('Paired') or props.get('Bonded')):
+            return
+        try:
+            dev = dbus.Interface(bus.get_object(BLUEZ, path), 'org.freedesktop.DBus.Properties')
+            if not bool(dev.Get('org.bluez.Device1', 'Trusted')):
+                dev.Set('org.bluez.Device1', 'Trusted', dbus.Boolean(True))
+        except Exception:
+            pass
+    bus.add_signal_receiver(changed, dbus_interface='org.freedesktop.DBus.Properties',
+                            signal_name='PropertiesChanged', bus_name=BLUEZ, path_keyword='path')
+
 def main():
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
     agent = Agent(bus)
+    trust_when_paired(bus)
     manager = dbus.Interface(bus.get_object(BLUEZ, '/org/bluez'), 'org.bluez.AgentManager1')
     try:
         manager.RegisterAgent(AGENT_PATH, 'NoInputNoOutput')

@@ -86,6 +86,8 @@ type Device struct {
 	// Reason explains a status the user cannot act on otherwise, such as another
 	// output already holding the single A2DP source endpoint.
 	Reason string `json:"reason,omitempty"`
+	// unnamed marks a placeholder name, so real names sort first.
+	unnamed bool
 }
 
 type WiFiNetwork struct {

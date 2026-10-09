@@ -1,7 +1,6 @@
 package oah
 
 import (
-	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -112,40 +111,18 @@ func usableBluetoothName(name, addr string) bool {
 	return true
 }
 
-// bluezStoredNames reads BlueZ's persistent Device1 cache. It is a fallback
-// only: discovery/Device1 properties are preferred, but the cache often keeps
-// the original remote name after a device's Alias later degrades to a MAC-like
-// value.
+// bluezStoredNames reads BlueZ's persistent storage. It is a fallback only:
+// discovery/Device1 properties are preferred, but storage often keeps the original
+// remote name after a device's Alias later degrades to a MAC-like value, and the
+// name cache remembers devices that are nearby but not currently named.
 func bluezStoredNames(addr string) []string {
 	addr = cleanAddr(addr)
 	if addr == "" {
 		return nil
 	}
-	paths, _ := filepath.Glob(filepath.Join("/var/lib/bluetooth", "*", addr, "info"))
 	out := []string{}
-	for _, p := range paths {
-		f, err := os.Open(p)
-		if err != nil {
-			continue
-		}
-		sc := bufio.NewScanner(f)
-		section := ""
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
-			if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-				section = strings.Trim(line, "[]")
-				continue
-			}
-			if section != "General" {
-				continue
-			}
-			if k, v, ok := strings.Cut(line, "="); ok {
-				if (k == "Alias" || k == "Name") && usableBluetoothName(v, addr) {
-					out = append(out, strings.TrimSpace(v))
-				}
-			}
-		}
-		_ = f.Close()
+	for _, p := range bluezNameCachePaths("/var/lib/bluetooth", addr) {
+		out = append(out, readBluezNameCache(p, addr)...)
 	}
 	return out
 }

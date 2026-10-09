@@ -222,12 +222,21 @@ import os,re
 p=Path('/etc/bluetooth/main.conf')
 s=p.read_text() if p.exists() else ''
 if '[General]' not in s: s='[General]\n'+s
-for key,val in [('Name',os.environ.get('OPENAUDIOHUB_BT_NAME','OpenAudioHub')),('Class','0x200414')]:
-    pat=re.compile(rf'(?m)^\s*#?\s*{re.escape(key)}\s*=.*$')
+# FastConnectable: faster page scanning, so a PC or phone connecting to the hub
+#   succeeds on the first try instead of timing out.
+# JustWorksRepairing=confirm: let a device that lost its pairing (Windows after
+#   "Remove device", a reflashed hub) pair again. BlueZ's default refuses it and
+#   Windows only reports that it could not connect. The pairing agent still
+#   allows this only while pairing mode is on.
+# TemporaryTimeout: keep discovered devices listed for 5 minutes after a scan
+#   instead of 30 seconds, so they do not vanish while the user picks one.
+for key,val in [('Name',os.environ.get('OPENAUDIOHUB_BT_NAME','OpenAudioHub')),('Class','0x200414'),
+                ('FastConnectable','true'),('JustWorksRepairing','confirm'),('TemporaryTimeout','300')]:
+    pat=re.compile(rf'(?m)^[ \t]*#?[ \t]*{re.escape(key)}[ \t]*=.*$')
     if pat.search(s): s=pat.sub(f'{key} = {val}',s,1)
     else: s=s.replace('[General]',f'[General]\n{key} = {val}',1)
 if '[Policy]' not in s: s += '\n[Policy]\n'
-pat=re.compile(r'(?m)^\s*#?\s*AutoEnable\s*=.*$')
+pat=re.compile(r'(?m)^[ \t]*#?[ \t]*AutoEnable[ \t]*=.*$')
 if pat.search(s): s=pat.sub('AutoEnable=true',s,1)
 else: s=s.replace('[Policy]','[Policy]\nAutoEnable=true',1)
 p.write_text(s)

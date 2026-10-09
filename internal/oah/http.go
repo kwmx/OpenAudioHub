@@ -264,6 +264,14 @@ func (a *App) handleBTRole(w http.ResponseWriter, r *http.Request) {
 	if err == nil && oldOccupant != "" && !strings.EqualFold(oldOccupant, q.Addr) {
 		_, _ = a.run.Run(6*time.Second, "bluetoothctl", "disconnect", oldOccupant)
 	}
+	if err == nil && q.Role != "" {
+		// A device that paired from its own side (Windows, most phones) is bonded
+		// but not trusted, so each reconnect needs the agent to authorize every
+		// profile and fails whenever the agent is restarting. An assigned device
+		// is one the user wants back automatically.
+		_, _ = a.run.Run(5*time.Second, "bluetoothctl", "trust", q.Addr)
+		a.clearPoliced(q.Addr)
+	}
 	a.btOpsMu.Unlock()
 	if err != nil {
 		writeJSON(w, 400, map[string]string{"error": err.Error()})

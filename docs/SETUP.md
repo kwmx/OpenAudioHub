@@ -118,6 +118,31 @@ For the known 44.1 kHz joint-stereo configuration and max 35 this should be
 may be lower than the negotiated maximum; these are distinct quantities.
 A disconnected Mac has no PCM object, so that query cannot succeed then.
 
+### Connecting a Windows PC
+
+Pair from Windows, not from the hub:
+
+1. In the hub's **Devices** screen, turn on **Pairing mode**.
+2. On Windows, open **Settings → Bluetooth & devices → Add device → Bluetooth**
+   and choose the hub. It appears as a speaker.
+3. While pairing mode is on, a source that has never been assigned is put in the
+   first free input automatically, and the hub opens a spare input endpoint if
+   your phone already holds Input 1. Outside pairing mode an unassigned source is
+   disconnected; its card says so. Assign it to an input and press **Connect**.
+
+If Windows says it cannot connect after you removed the hub on one side, turn
+on pairing mode, remove the hub in Windows, and add it again. Re-pairing a known
+device is accepted only while pairing mode is on.
+
+The installer sets these in `/etc/bluetooth/main.conf`. They apply after the
+next reboot or `sudo systemctl restart bluetooth`, which drops every audio link:
+
+| Setting | Why |
+|---|---|
+| `FastConnectable = true` | PCs and phones connecting to the hub succeed on the first attempt. |
+| `JustWorksRepairing = confirm` | A device that lost its pairing can pair again; the agent allows it only in pairing mode. |
+| `TemporaryTimeout = 300` | Scanned devices stay listed for five minutes rather than 30 seconds. |
+
 ## 5. A/V synchronization (experimental)
 
 This control applies to **Input 2 only**, the BlueALSA receiver. Input 1 runs on

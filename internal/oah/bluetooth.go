@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// scanDuration is how long a UI-requested Bluetooth scan runs.
+const scanDuration = 20 * time.Second
+
 var macRE = regexp.MustCompile(`(?i)[0-9A-F]{2}(?::[0-9A-F]{2}){5}`)
 
 func parseBluetoothDeviceLines(out string) map[string]string {
@@ -20,6 +23,40 @@ func parseBluetoothDeviceLines(out string) map[string]string {
 		}
 		addr := strings.ToUpper(line[loc[0]:loc[1]])
 		m[addr] = strings.TrimSpace(line[loc[1]:])
+	}
+	return m
+}
+
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]|\r`)
+
+// scanLineRE matches the discovery events that carry a name:
+//
+//	[NEW] Device AA:BB:CC:DD:EE:FF Some Name
+//	[CHG] Device AA:BB:CC:DD:EE:FF Name: Some Name
+//	[CHG] Device AA:BB:CC:DD:EE:FF Alias: Some Name
+var scanLineRE = regexp.MustCompile(`(?i)\[(NEW|CHG)\]\s+Device\s+([0-9A-F]{2}(?::[0-9A-F]{2}){5})\s+(.*)$`)
+
+// parseScanNames extracts device names from `bluetoothctl scan on` output. It
+// must not treat every line as "address then name": scan output is mostly
+// property changes such as "[CHG] Device X RSSI: -60" or "ManufacturerData Key:",
+// and taking the text after the address stored those as the device's name.
+func parseScanNames(out string) map[string]string {
+	m := map[string]string{}
+	for _, line := range strings.Split(ansiRE.ReplaceAllString(out, ""), "\n") {
+		g := scanLineRE.FindStringSubmatch(strings.TrimSpace(line))
+		if g == nil {
+			continue
+		}
+		addr, rest := strings.ToUpper(g[2]), strings.TrimSpace(g[3])
+		name := ""
+		if strings.EqualFold(g[1], "NEW") {
+			name = rest
+		} else if k, v, ok := strings.Cut(rest, ":"); ok && (k == "Name" || k == "Alias") {
+			name = strings.TrimSpace(v)
+		}
+		if usableBluetoothName(name, addr) {
+			m[addr] = name
+		}
 	}
 	return m
 }
@@ -37,6 +74,47 @@ func (a *App) bluetoothDeviceSubset(kind string) map[string]bool {
 }
 
 func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
+	cfg := a.cfg.Get()
+	assigned := map[string]bool{}
+	for _, addr := range append(append([]string{}, cfg.Slots.Inputs...), cfg.Slots.Outputs...) {
+		if addr != "" {
+			assigned[strings.ToUpper(addr)] = true
+		}
+	}
+	var devices []Device
+	if snap, err := a.bluezSnapshot(); err == nil {
+		devices = a.devicesFromSnapshot(snap, assigned)
+	} else {
+		var listErr error
+		devices, listErr = a.devicesFromBluetoothctl(assigned)
+		if listErr != nil {
+			return devices, listErr
+		}
+	}
+	return a.decorateDevices(devices, transports), nil
+}
+
+// devicesFromSnapshot describes every device from one D-Bus snapshot, so nearby
+// devices get their real name and type without a subprocess each.
+func (a *App) devicesFromSnapshot(snap map[string]bluezDevice, assigned map[string]bool) []Device {
+	devices := make([]Device, 0, len(snap)+len(assigned))
+	for addr, bd := range snap {
+		if hiddenNearby(bd, assigned[addr]) {
+			continue
+		}
+		devices = append(devices, a.deviceFromBluez(bd))
+	}
+	// Assigned devices must remain represented during transient BlueZ resets.
+	for addr := range assigned {
+		if _, ok := snap[addr]; !ok {
+			devices = append(devices, a.bluetoothInfo(addr, ""))
+		}
+	}
+	return devices
+}
+
+// devicesFromBluetoothctl is the fallback when the D-Bus snapshot is unavailable.
+func (a *App) devicesFromBluetoothctl(assigned map[string]bool) ([]Device, error) {
 	// `bluetoothctl devices` can contain dozens of nearby transient devices.
 	// Calling `bluetoothctl info` for every one every few seconds overloaded BlueZ
 	// and the small board. Only paired/connected/assigned devices need detailed
@@ -56,14 +134,6 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		connected = map[string]bool{}
 	}
 
-	cfg := a.cfg.Get()
-	assigned := map[string]bool{}
-	for _, addr := range append(append([]string{}, cfg.Slots.Inputs...), cfg.Slots.Outputs...) {
-		if addr != "" {
-			assigned[strings.ToUpper(addr)] = true
-		}
-	}
-
 	devices := make([]Device, 0, len(listed)+len(assigned))
 	seen := map[string]bool{}
 	// Nearby devices used to be described as "unknown" because inspecting every
@@ -81,11 +151,12 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 			continue
 		}
 		name := firstUsableBluetoothName(addr, listedName, a.rememberedDeviceName(addr))
-		if name == "" {
+		unnamed := name == ""
+		if unnamed {
 			name = "Nearby device · " + tailAddr(addr)
 		}
 		if d, ok := a.cachedDeviceInfo(addr, nearbyInfoTTL); ok {
-			d.Name = name
+			d.Name, d.unnamed = name, unnamed
 			devices = append(devices, d)
 			continue
 		}
@@ -100,7 +171,7 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		// refine on a later build rather than blocking the state on BlueZ.
 		devices = append(devices, Device{
 			ID: strings.ReplaceAll(addr, ":", "_"), Addr: addr, Name: name,
-			Kind: "unknown", Caps: []string{}, Status: "disconnected",
+			Kind: "unknown", Caps: []string{}, Status: "disconnected", unnamed: unnamed,
 		})
 	}
 	// Assigned devices must remain represented during transient BlueZ resets.
@@ -110,7 +181,11 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		}
 		devices = append(devices, a.bluetoothInfo(addr, ""))
 	}
+	return devices, nil
+}
 
+// decorateDevices overlays transports, roles and status, then sorts the list.
+func (a *App) decorateDevices(devices []Device, transports []Transport) []Device {
 	inputTransport := map[string]bool{}
 	outputTransport := map[string]bool{}
 	for _, t := range transports {
@@ -162,6 +237,8 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		// control, or the screen looks broken.
 		if !devices[i].Paired && aclConnected && devices[i].Role == "" {
 			devices[i].Reason = "Connected without a stored pairing, so it cannot be assigned yet. Press Pair to finish, then choose a role."
+		} else if devices[i].Role == "" && devices[i].Paired && a.recentlyPoliced(addr, time.Now()) {
+			devices[i].Reason = "The hub disconnected this source because it has no input. Choose an input for it, then connect again."
 		}
 		if devices[i].Connected {
 			devices[i].Status = "connected"
@@ -204,13 +281,25 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		// the user is standing next to and trying to pair, so alphabetical order
 		// buried it among everything BlueZ had ever seen.
 		if ri == unassignedRank {
-			if devices[i].RSSI != devices[j].RSSI {
-				return devices[i].RSSI > devices[j].RSSI
+			if devices[i].unnamed != devices[j].unnamed {
+				return !devices[i].unnamed
+			}
+			if si, sj := rssiRank(devices[i].RSSI), rssiRank(devices[j].RSSI); si != sj {
+				return si > sj
 			}
 		}
 		return strings.ToLower(devices[i].Name) < strings.ToLower(devices[j].Name)
 	})
-	return devices, nil
+	return devices
+}
+
+// rssiRank orders signal strength. BlueZ reports no RSSI for a device it is not
+// currently hearing, which reads as 0 and used to sort above every real reading.
+func rssiRank(rssi int) int {
+	if rssi == 0 {
+		return -1000
+	}
+	return rssi
 }
 
 // unassignedRank sorts every device with no role after the assigned ones.
@@ -273,6 +362,8 @@ func (a *App) bluetoothInfo(addr, listedName string) Device {
 	if best := firstUsableBluetoothName(addr, candidates...); best != "" {
 		d.Name = best
 		a.rememberDeviceName(addr, best)
+	} else {
+		d.unnamed = true
 	}
 	if d.Connected {
 		d.Status = "connected"
@@ -704,6 +795,8 @@ func (a *App) setPairing(enable bool) error {
 	a.pairing.Until = until
 	a.mu.Unlock()
 	if enable {
+		// Reconcile opens a spare input endpoint while pairing is on.
+		a.requestReconcile("pairing mode enabled")
 		go func(until time.Time) {
 			time.Sleep(time.Until(until))
 			a.mu.RLock()
@@ -718,6 +811,13 @@ func (a *App) setPairing(enable bool) error {
 	return nil
 }
 
+// pairingActive reports whether pairing mode is currently on.
+func (a *App) pairingActive() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.pairing.Active && time.Now().Before(a.pairing.Until)
+}
+
 func (a *App) scanBluetooth() {
 	a.mu.Lock()
 	if a.pairing.Scanning {
@@ -728,13 +828,18 @@ func (a *App) scanBluetooth() {
 	a.mu.Unlock()
 	a.signalRefresh()
 	go func() {
-		out, _ := a.run.Run(8*time.Second, "bluetoothctl", "--timeout", "6", "scan", "on")
+		// BR/EDR inquiry alone lasts about 10 s, and BlueZ resolves names only
+		// after a device is found, so the old 6 s scan usually ended before any
+		// name arrived. Refresh the list midway so devices appear as they are found.
+		go func() {
+			time.Sleep(scanDuration / 2)
+			a.signalRefresh()
+		}()
+		out, _ := a.run.Run(scanDuration+5*time.Second, "bluetoothctl", "--timeout", strconv.Itoa(int(scanDuration/time.Second)), "scan", "on")
 		// Scan output is often the only moment a device exposes a useful friendly
 		// name. Cache it before pairing can replace Alias/Name with a MAC-like value.
-		for addr, name := range parseBluetoothDeviceLines(out) {
-			if usableBluetoothName(name, addr) {
-				a.rememberDeviceName(addr, name)
-			}
+		for addr, name := range parseScanNames(out) {
+			a.rememberDeviceName(addr, name)
 		}
 		a.mu.Lock()
 		a.pairing.Scanning = false

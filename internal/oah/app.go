@@ -53,6 +53,10 @@ type App struct {
 	logMu           sync.Mutex
 	logs            []string
 
+	// Unassigned sources reconcile disconnected, so the UI can say why.
+	policedMu sync.Mutex
+	policed   map[string]time.Time
+
 	loginMu    sync.Mutex
 	loginLimit *loginLimiter
 
@@ -71,7 +75,7 @@ func NewApp(configPath, version string) (*App, error) {
 		return nil, err
 	}
 	namePath := deviceNameCachePath(configPath)
-	a := &App{cfg: cfg, run: runner{}, version: version, listen: cfg.Get().Listen, deviceNames: loadDeviceNameCache(namePath), deviceNamesPath: namePath, deviceInfo: map[string]deviceInfoEntry{}, connectState: map[string]*connectState{}, loginLimit: newLoginLimiter(), sse: map[chan []byte]struct{}{}, refresh: make(chan struct{}, 1), reconcileReq: make(chan string, 1)}
+	a := &App{cfg: cfg, run: runner{}, version: version, listen: cfg.Get().Listen, deviceNames: loadDeviceNameCache(namePath), deviceNamesPath: namePath, deviceInfo: map[string]deviceInfoEntry{}, connectState: map[string]*connectState{}, loginLimit: newLoginLimiter(), policed: map[string]time.Time{}, sse: map[chan []byte]struct{}{}, refresh: make(chan struct{}, 1), reconcileReq: make(chan string, 1)}
 	return a, nil
 }
 func (a *App) SetListen(s string) { a.listen = s }
