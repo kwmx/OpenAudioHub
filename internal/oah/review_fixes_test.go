@@ -2,6 +2,7 @@ package oah
 
 import (
 	"math"
+	"sync"
 	"testing"
 	"time"
 )
@@ -92,6 +93,9 @@ func TestSixGHzBand(t *testing.T) {
 	if c := channelForFreq(5975); c != 5 {
 		t.Fatalf("channel %d, want 5", c)
 	}
+	if b, c := bandForFreq(5935), channelForFreq(5935); b != "6 GHz" || c != 2 {
+		t.Fatalf("6 GHz channel 2: %q %d", b, c)
+	}
 	if b, c := bandForFreq(5180), channelForFreq(5180); b != "5 GHz" || c != 36 {
 		t.Fatalf("5 GHz regression: %q %d", b, c)
 	}
@@ -110,5 +114,42 @@ func TestMainConfNamePatternKeepsSurroundingLines(t *testing.T) {
 func TestMainConfNameAddsKeyWhenMissing(t *testing.T) {
 	if got := setMainConfName("", "Hub"); got != "[General]\nName = Hub\n" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// Two simultaneous joins must not both get past the pending check: the check
+// and the claim happen under one lock, before any netplan file is touched.
+func TestReserveNetworkApplyIsExclusive(t *testing.T) {
+	a := &App{}
+	now := time.Unix(1_000_000, 0)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	granted := 0
+	var release func()
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if r, err := a.reserveNetworkApply(now); err == nil {
+				mu.Lock()
+				granted++
+				release = r
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if granted != 1 {
+		t.Fatalf("%d concurrent reservations granted, want 1", granted)
+	}
+	release()
+	r, err := a.reserveNetworkApply(now)
+	if err != nil {
+		t.Fatal("a released reservation must free the slot")
+	}
+	r()
+	a.networkApply = &NetworkApply{State: "verifying", StartedAt: now}
+	if _, err := a.reserveNetworkApply(now.Add(time.Second)); err == nil {
+		t.Fatal("an unconfirmed apply must block a new one")
 	}
 }

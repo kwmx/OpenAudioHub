@@ -31,7 +31,10 @@ type App struct {
 	mu           sync.RWMutex
 	pairing      PairingState
 	networkApply *NetworkApply
-	wifiNetworks []WiFiNetwork
+	// networkPreparing is set while a network change is being prepared, before
+	// it is recorded in networkApply; see reserveNetworkApply.
+	networkPreparing bool
+	wifiNetworks     []WiFiNetwork
 
 	audioConfigMu   sync.Mutex
 	mixerApplyMu    sync.Mutex

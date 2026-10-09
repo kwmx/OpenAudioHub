@@ -125,6 +125,28 @@ func (a *App) scanWiFi() []WiFiNetwork {
 	return list
 }
 
+// reserveNetworkApply claims the right to change the network, or explains why
+// another change is in the way. Each apply snapshots the current netplan files
+// and arms a rollback to them. A second apply while one is pending would
+// snapshot the first's unconfirmed files, and the two rollbacks would then
+// fight: the first restores the original network, and the second later
+// restores the unconfirmed one. The claim is taken under the write lock, before
+// any side effect, so two simultaneous requests cannot both pass the check.
+// release must be called once the new apply is recorded or has failed.
+func (a *App) reserveNetworkApply(now time.Time) (release func(), err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.networkPreparing || (a.networkApply != nil && networkApplyPending(a.networkApply, now)) {
+		return nil, fmtErr("another network change is still pending; confirm it or wait for the rollback to finish")
+	}
+	a.networkPreparing = true
+	return func() {
+		a.mu.Lock()
+		a.networkPreparing = false
+		a.mu.Unlock()
+	}, nil
+}
+
 // networkRollbackDelay is how long a network change has to be confirmed before
 // the previous netplan configuration is restored.
 const networkRollbackDelay = 60 * time.Second
@@ -157,6 +179,9 @@ func channelForFreq(f int) int {
 	if f >= 2412 && f <= 2472 {
 		return (f - 2407) / 5
 	}
+	if f == 5935 {
+		return 2 // the one 6 GHz channel off the 5950 MHz grid
+	}
 	if f >= 5955 && f <= 7115 {
 		return (f - 5950) / 5
 	}
@@ -185,16 +210,11 @@ func (a *App) startNetworkApply(ssid, password, bssid, band string) (*NetworkApp
 	if band != "" && band != "5GHz" && band != "2.4GHz" {
 		return nil, fmtErr("invalid Wi-Fi band")
 	}
-	// Each apply snapshots the current netplan files and arms a rollback to them.
-	// A second apply while one is pending would snapshot the first's unconfirmed
-	// files, and the two rollbacks would then fight: the first restores the
-	// original network, and the second later restores the unconfirmed one.
-	a.mu.RLock()
-	pending := a.networkApply != nil && networkApplyPending(a.networkApply, time.Now())
-	a.mu.RUnlock()
-	if pending {
-		return nil, fmtErr("another network change is still pending; confirm it or wait for the rollback to finish")
+	release, err := a.reserveNetworkApply(time.Now())
+	if err != nil {
+		return nil, err
 	}
+	defer release()
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
 	backup := filepath.Join("/var/lib/openaudiohub/netplan-backups", id)
 	if err := os.MkdirAll(backup, 0700); err != nil {
