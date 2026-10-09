@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -75,22 +76,31 @@ func (a *App) rememberDeviceName(addr, name string) {
 	}
 	path := a.deviceNamesPath
 	a.deviceNamesMu.Unlock()
+	_ = writeDeviceNameFile(path, copyMap)
+}
 
+// deviceNamesFileMu serializes writes of the name cache file; every writer uses
+// the same temporary file.
+var deviceNamesFileMu sync.Mutex
+
+func writeDeviceNameFile(path string, names map[string]string) error {
 	if path == "" {
-		return
+		return nil
 	}
+	deviceNamesFileMu.Lock()
+	defer deviceNamesFileMu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return
+		return err
 	}
-	b, err := json.MarshalIndent(copyMap, "", "  ")
+	b, err := json.MarshalIndent(names, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
-		return
+		return err
 	}
-	_ = os.Rename(tmp, path)
+	return os.Rename(tmp, path)
 }
 
 func usableBluetoothName(name, addr string) bool {

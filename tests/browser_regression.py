@@ -1,5 +1,5 @@
 """Real Chromium interaction tests with in-page mocked API/telemetry (offline; no HTTP or Bluetooth hardware)."""
-import copy,json,threading,time,unittest
+import copy,json,os,threading,time,unittest
 from functools import partial
 from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
 from pathlib import Path
@@ -16,7 +16,10 @@ STATE={
 class BrowserRegression(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
-  cls.pw=sync_playwright().start();cls.browser=cls.pw.chromium.launch(executable_path='/usr/bin/chromium',headless=True,args=['--no-sandbox'])
+  # CHROMIUM overrides the browser; otherwise use the system Chromium when
+  # present, else Playwright's own (as installed in CI).
+  exe=os.environ.get('CHROMIUM') or ('/usr/bin/chromium' if os.path.exists('/usr/bin/chromium') else None)
+  cls.pw=sync_playwright().start();cls.browser=cls.pw.chromium.launch(executable_path=exe,headless=True,args=['--no-sandbox'])
  @classmethod
  def tearDownClass(cls):cls.browser.close();cls.pw.stop()
  def setUp(self):

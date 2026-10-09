@@ -67,6 +67,9 @@ func (f *fakeHub) run(name string, args ...string) (string, error) {
 		}
 		return "", nil
 	case "bluetoothctl":
+		if f.units["bluetooth.service"] != "active" {
+			return "Waiting to connect to bluetoothd...", errors.New("exit status 1")
+		}
 		switch args[0] {
 		case "show":
 			p := "no"
@@ -83,6 +86,9 @@ func (f *fakeHub) run(name string, args ...string) (string, error) {
 		}
 		return "", nil
 	case "busctl":
+		if f.units["bluetooth.service"] != "active" {
+			return "", errors.New("unknown name org.bluez")
+		}
 		out := f.busctl
 		if f.trusted {
 			out = strings.ReplaceAll(out, `"Trusted":{"type":"b","data":false}`, `"Trusted":{"type":"b","data":true}`)
@@ -208,9 +214,8 @@ func TestDoctorFindsAndFixesProblems(t *testing.T) {
 	fake.alias = "orangepizero2w"
 	a := doctorApp(t, fake)
 	// Stale settings and leftovers from older releases.
-	if err := os.WriteFile(bluetoothMainConf, []byte("[General]\nName = OpenAudioHub\n#FastConnectable = false\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	// main.conf does not exist yet, nor does its directory.
+	bluetoothMainConf = filepath.Join(t.TempDir(), "bluetooth", "main.conf")
 	if err := os.Remove(filepath.Join(filepath.Dir(a.cfg.path), "audio.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -232,13 +237,27 @@ func TestDoctorFindsAndFixesProblems(t *testing.T) {
 	}
 
 	before := a.runDoctor(nil)
-	want := map[string]string{
-		"bluetooth-service": doctorProblem, "bluetooth-adapter": doctorProblem, "bluetooth-name": doctorWarning,
-		"pairing-agent": doctorProblem, "bluez-config": doctorWarning, "pairing-mode": doctorProblem,
-		"assigned-devices": doctorWarning, "device-names": doctorWarning, "bluealsa-conflict": doctorProblem,
+	visible := map[string]string{
+		"bluetooth-service": doctorProblem, "pairing-agent": doctorProblem, "bluez-config": doctorWarning,
+		"pairing-mode": doctorProblem, "device-names": doctorWarning, "bluealsa-conflict": doctorProblem,
 		"audio-projection": doctorProblem,
 	}
-	for id, st := range want {
+	// With Bluetooth down these cannot be checked yet; "fix all" must still
+	// reach them once its first round has started Bluetooth.
+	hidden := []string{"bluetooth-adapter", "bluetooth-name", "assigned-devices"}
+	for _, id := range hidden {
+		if c := checkByID(t, before, id); c.Status != doctorSkipped {
+			t.Errorf("before: %s = %s, want skipped while Bluetooth is down", id, c.Status)
+		}
+	}
+	want := map[string]string{}
+	for id, st := range visible {
+		want[id] = st
+	}
+	for _, id := range hidden {
+		want[id] = ""
+	}
+	for id, st := range visible {
 		c := checkByID(t, before, id)
 		if c.Status != st || c.FixLabel == "" {
 			t.Errorf("before: %s = %s (fix %q), want %s with a fix: %s", id, c.Status, c.FixLabel, st, c.Detail)
@@ -295,14 +314,14 @@ func TestDoctorReportsFixThatDoesNotHelp(t *testing.T) {
 
 func TestDoctorFixesOnlySelectedChecks(t *testing.T) {
 	fake := healthyFake(t)
-	fake.units["bluetooth.service"] = "inactive"
+	fake.units["openaudiohub-bt-agent.service"] = "inactive"
 	fake.alias = "wrong"
 	a := doctorApp(t, fake)
 	rep := a.runDoctor(map[string]bool{"bluetooth-name": true})
-	if fake.called("systemctl start bluetooth.service") {
+	if fake.called("systemctl restart openaudiohub-bt-agent.service") {
 		t.Fatal("a fix that was not selected ran")
 	}
-	if c := checkByID(t, rep, "bluetooth-service"); c.Status != doctorProblem || c.Fixed {
+	if c := checkByID(t, rep, "pairing-agent"); c.Status != doctorProblem || c.Fixed {
 		t.Fatalf("unselected check changed: %+v", c)
 	}
 	if c := checkByID(t, rep, "bluetooth-name"); !c.Fixed {
@@ -388,5 +407,56 @@ func TestDoctorFixEndpointNeedsSelection(t *testing.T) {
 	var rep DoctorReport
 	if rec.Code != 200 || json.NewDecoder(rec.Body).Decode(&rep) != nil || len(rep.Checks) == 0 {
 		t.Fatalf("status %d", rec.Code)
+	}
+}
+
+func TestDoctorFixAllRunsEachFixOnce(t *testing.T) {
+	fake := healthyFake(t)
+	fake.units["openaudiohub-bt-agent.service"] = "failed"
+	fake.stubborn["openaudiohub-bt-agent.service"] = true
+	a := doctorApp(t, fake)
+	a.runDoctor(map[string]bool{"*": true})
+	n := 0
+	for _, c := range fake.calls {
+		if c == "systemctl restart openaudiohub-bt-agent.service" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("a fix that does not help ran %d times, want once", n)
+	}
+}
+
+// Debian's main.conf has more sections after [General], and older installs or a
+// rename leave an active value to replace, not add to.
+func TestSetConfKeyReplacesActiveKeyBeforeLaterSections(t *testing.T) {
+	in := "[General]\n#Name = BlueZ\nName = Old Hub\nClass = 0x000100\n\n[BR]\n#PageScanType=\n\n[Policy]\nAutoEnable=false\n"
+	out := setConfKey(in, "General", "Name", "Hub")
+	out = setConfKey(out, "General", "Class", "0x200414")
+	out = setConfKey(out, "Policy", "AutoEnable", "true")
+	out = setConfKey(out, "General", "FastConnectable", "true")
+	want := "[General]\nFastConnectable = true\n#Name = BlueZ\nName = Hub\nClass = 0x200414\n\n[BR]\n#PageScanType=\n\n[Policy]\nAutoEnable = true\n"
+	if out != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", out, want)
+	}
+	if again := setConfKey(out, "General", "Name", "Hub"); again != out {
+		t.Fatal("setting the same value twice must not add a line")
+	}
+}
+
+func TestDoctorFixesStaleActiveBluezSettings(t *testing.T) {
+	fake := healthyFake(t)
+	a := doctorApp(t, fake)
+	stale := "[General]\nName = orangepizero2w\nClass = 0x000100\n\n[BR]\n\n[LE]\n\n[Policy]\nAutoEnable=true\n"
+	if err := os.WriteFile(bluetoothMainConf, []byte(stale), 0644); err != nil {
+		t.Fatal(err)
+	}
+	rep := a.runDoctor(map[string]bool{"bluez-config": true})
+	if c := checkByID(t, rep, "bluez-config"); !c.Fixed {
+		t.Fatalf("stale active settings were not fixed: %+v", c)
+	}
+	b, _ := os.ReadFile(bluetoothMainConf)
+	if strings.Count(string(b), "Name =") != 1 || strings.Count(string(b), "Class =") != 1 {
+		t.Fatalf("duplicate keys written:\n%s", b)
 	}
 }

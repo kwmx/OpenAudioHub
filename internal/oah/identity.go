@@ -32,26 +32,39 @@ func setConfKey(s, section, key, val string) string {
 	// [ \t] rather than \s: \s also matches newlines.
 	keyRE := regexp.MustCompile(`^[ \t]*#?[ \t]*` + regexp.QuoteMeta(key) + `[ \t]*=`)
 	entry := key + " = " + val + "\n"
-	header := -1
+	header, end := -1, len(lines)
 	for i, l := range lines {
 		t := strings.TrimSpace(l)
 		if !strings.HasPrefix(t, "[") || !strings.HasSuffix(t, "]") {
 			continue
 		}
 		if header >= 0 {
-			// Reached the next section without finding the key.
-			return strings.Join(insertLine(lines, header+1, entry), "")
+			end = i
+			break
 		}
 		if strings.EqualFold(strings.Trim(t, "[]"), section) {
 			header = i
 		}
 	}
 	if header >= 0 {
-		for i := header + 1; i < len(lines); i++ {
-			if keyRE.MatchString(lines[i]) {
+		// Prefer the active line: BlueZ reads the last active value, so leaving
+		// it while replacing a commented-out example would change nothing.
+		commented := -1
+		for i := header + 1; i < end; i++ {
+			if !keyRE.MatchString(lines[i]) {
+				continue
+			}
+			if !strings.HasPrefix(strings.TrimSpace(lines[i]), "#") {
 				lines[i] = entry
 				return strings.Join(lines, "")
 			}
+			if commented < 0 {
+				commented = i
+			}
+		}
+		if commented >= 0 {
+			lines[commented] = entry
+			return strings.Join(lines, "")
 		}
 		return strings.Join(insertLine(lines, header+1, entry), "")
 	}

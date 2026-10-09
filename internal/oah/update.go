@@ -90,10 +90,15 @@ func compareVersions(a, b string) int {
 }
 
 var (
-	updateMu    sync.Mutex
-	updateState UpdateStatus
-	updateRun   bool
+	updateMu      sync.Mutex
+	updateState   UpdateStatus
+	updateRun     bool
+	updateStarted time.Time
 )
+
+// updateStartGrace covers the time between marking an update as running and
+// systemd-run creating its unit, when the unit does not exist yet.
+const updateStartGrace = time.Minute
 
 func getenv(k string) string { return os.Getenv(k) }
 
@@ -162,6 +167,9 @@ func (a *App) updateRunningLocked() bool {
 	if !updateRun {
 		return false
 	}
+	if time.Since(updateStarted) < updateStartGrace {
+		return true
+	}
 	out, _ := a.run.Run(3*time.Second, "systemctl", "is-active", updateUnit+".service")
 	switch strings.TrimSpace(out) {
 	case "active", "activating", "reloading":
@@ -199,6 +207,7 @@ func (a *App) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updateRun = true
+	updateStarted = time.Now()
 	updateMu.Unlock()
 
 	// The installer stops this service. Running update.sh as a child of this unit

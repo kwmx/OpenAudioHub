@@ -224,7 +224,11 @@ func (a *App) deviceFromBluez(bd bluezDevice) Device {
 	candidates = append(candidates, a.rememberedDeviceName(bd.Addr))
 	if best := firstUsableBluetoothName(bd.Addr, candidates...); best != "" {
 		d.Name = best
-		a.rememberDeviceName(bd.Addr, best)
+		// Persist names only for devices the hub keeps. Nearby devices change
+		// constantly, and saving each would rewrite the file on the SD card.
+		if d.Paired {
+			a.rememberDeviceName(bd.Addr, best)
+		}
 	} else {
 		d.Name = fallbackDeviceName(bd.Addr, bd.Class, bd.Icon)
 		d.unnamed = true

@@ -12,9 +12,10 @@ export function installInteractionGuards(root, onIdle) {
 }
 export function interacting(root) {
   // A control that merely keeps focus after a click must not freeze live updates;
-  // patchHTML already protects focused and edited controls.
+  // patchHTML already protects focused and edited controls. A focused select is
+  // the exception: re-sorting can move its card, which closes an open popup.
   const el=document.activeElement;
-  return pointerDown || (root.contains(el) && el.matches('input,select,textarea') && dirty.has(el));
+  return pointerDown || (root.contains(el) && (el.tagName==='SELECT' || (el.matches('input,textarea') && dirty.has(el))));
 }
 export function releaseControl(el) { if(el) dirty.delete(el); }
 export function releaseControls(root) { for(const el of root.querySelectorAll('input,select,textarea')) dirty.delete(el); }

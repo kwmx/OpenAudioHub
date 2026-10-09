@@ -3,6 +3,7 @@ package oah
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -70,6 +71,9 @@ var (
 	diskCheckPath       = "/"
 )
 
+// doctorFixRounds bounds how often "fix all" re-checks for newly exposed problems.
+const doctorFixRounds = 3
+
 // recommendedBluezConf is what the installer writes to main.conf.
 func recommendedBluezConf(c Config) []struct{ section, key, val string } {
 	return []struct{ section, key, val string }{
@@ -116,6 +120,10 @@ func (a *App) RunDoctor(fix bool) DoctorReport {
 // runDoctor runs every check. fixIDs selects fixes to apply: nil applies none,
 // and the key "*" applies all of them. After fixing, every check runs again, so
 // the report shows the state the hub is actually in.
+//
+// Applying all fixes repeats for a few rounds, because one fix can expose the
+// next: while Bluetooth is down the adapter and device checks cannot run, so
+// their problems only appear once the first round has started it.
 func (a *App) runDoctor(fixIDs map[string]bool) DoctorReport {
 	a.doctorMu.Lock()
 	defer a.doctorMu.Unlock()
@@ -127,24 +135,38 @@ func (a *App) runDoctor(fixIDs map[string]bool) DoctorReport {
 	}
 	attempted := map[string]outcome{}
 	if len(fixIDs) > 0 {
-		for i, d := range defs {
-			f := findings[i]
-			if f.fix == nil || f.status == doctorOK || f.status == doctorSkipped {
-				continue
+		rounds := 1
+		if fixIDs["*"] {
+			rounds = doctorFixRounds
+		}
+		for round := 0; round < rounds; round++ {
+			applied := 0
+			for i, d := range defs {
+				f := findings[i]
+				if f.fix == nil || f.status == doctorOK || f.status == doctorSkipped {
+					continue
+				}
+				if !fixIDs["*"] && !fixIDs[d.id] {
+					continue
+				}
+				if _, done := attempted[d.id]; done {
+					continue // each fix runs at most once per request
+				}
+				note, err := f.fix()
+				if err != nil {
+					a.logf("doctor: fix %s failed: %v", d.id, err)
+				} else {
+					a.logf("doctor: applied fix %s", d.id)
+				}
+				attempted[d.id] = outcome{err: err, note: note}
+				applied++
 			}
-			if !fixIDs["*"] && !fixIDs[d.id] {
-				continue
+			if applied == 0 {
+				break
 			}
-			note, err := f.fix()
-			if err != nil {
-				a.logf("doctor: fix %s failed: %v", d.id, err)
-			} else {
-				a.logf("doctor: applied fix %s", d.id)
-			}
-			attempted[d.id] = outcome{err: err, note: note}
+			findings = a.evaluateChecks(defs)
 		}
 		if len(attempted) > 0 {
-			findings = a.evaluateChecks(defs)
 			a.signalRefresh()
 		}
 	}
@@ -279,6 +301,15 @@ func rfkillBluetooth(root string) (soft, hard bool) {
 }
 
 // adapterShow parses `bluetoothctl show`. ok is false when there is no adapter.
+func unblockBluetoothSysfs(root string) {
+	entries, _ := filepath.Glob(filepath.Join(root, "rfkill*"))
+	for _, e := range entries {
+		if t, _ := os.ReadFile(filepath.Join(e, "type")); strings.TrimSpace(string(t)) == "bluetooth" {
+			_ = os.WriteFile(filepath.Join(e, "soft"), []byte("0"), 0644)
+		}
+	}
+}
+
 func (a *App) adapterShow() (props map[string]string, ok bool) {
 	out, err := a.run.Run(4*time.Second, "bluetoothctl", "show")
 	if err != nil || strings.Contains(out, "No default controller") {
@@ -308,6 +339,8 @@ func (a *App) checkBluetoothAdapter() finding {
 		return finding{status: doctorProblem, detail: "The Bluetooth radio is disabled by a hardware switch or firmware (rfkill hard block). The hub cannot turn it on."}
 	}
 	powerOn := func() (string, error) {
+		// Unblock through sysfs as well: the rfkill tool is not always installed.
+		unblockBluetoothSysfs(rfkillRoot)
 		_, _ = a.run.Run(4*time.Second, "rfkill", "unblock", "bluetooth")
 		time.Sleep(500 * time.Millisecond)
 		_, err := a.run.Run(6*time.Second, "bluetoothctl", "power", "on")
@@ -399,6 +432,9 @@ func (a *App) checkBluezConfig() finding {
 					s = setConfKey(s, r.section, r.key, r.val)
 				}
 			}
+			if err := os.MkdirAll(filepath.Dir(bluetoothMainConf), 0755); err != nil {
+				return "", err
+			}
 			if err := os.WriteFile(bluetoothMainConf, []byte(s), 0644); err != nil {
 				return "", err
 			}
@@ -417,7 +453,13 @@ func (a *App) checkPairingMode() finding {
 			status:   doctorProblem,
 			detail:   "Pairing mode is off, but the pairing helper still accepts new devices.",
 			fixLabel: "Turn pairing off",
-			fix:      func() (string, error) { return "", a.setPairing(false) },
+			fix: func() (string, error) {
+				// The user may have turned pairing on since the check ran.
+				if a.pairingActive() {
+					return "", nil
+				}
+				return "", a.setPairing(false)
+			},
 		}
 	case active && !flag:
 		return finding{
@@ -425,6 +467,13 @@ func (a *App) checkPairingMode() finding {
 			detail:   "Pairing mode is on, but the pairing helper will refuse new devices.",
 			fixLabel: "Repair pairing mode",
 			fix: func() (string, error) {
+				// Hold a.mu so the pairing timer cannot turn pairing off between
+				// this check and the write, which would leave pairing open.
+				a.mu.Lock()
+				defer a.mu.Unlock()
+				if !(a.pairing.Active && time.Now().Before(a.pairing.Until)) {
+					return "", nil
+				}
 				if err := os.MkdirAll(filepath.Dir(pairingFlagPath), 0755); err != nil {
 					return "", err
 				}
@@ -581,18 +630,7 @@ func (a *App) rewriteDeviceNameCache() (string, error) {
 	a.deviceNames = clean
 	path := a.deviceNamesPath
 	a.deviceNamesMu.Unlock()
-	b, err := json.MarshalIndent(clean, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return "", err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0644); err != nil {
-		return "", err
-	}
-	return "", os.Rename(tmp, path)
+	return "", writeDeviceNameFile(path, clean)
 }
 
 func (a *App) checkAudioSession() finding {
@@ -764,12 +802,35 @@ func (a *App) checkDiskSpace() finding {
 func (a *App) checkWiFiBand() finding {
 	w := a.wifiState()
 	switch {
+	case w.SSID == "" && wiredConnection(w.Interface):
+		return finding{status: doctorOK, detail: "Using a wired connection; Wi-Fi is not connected."}
 	case w.SSID == "":
-		return finding{status: doctorWarning, detail: "Not connected to Wi-Fi on " + w.Interface + ". Fine if the hub uses Ethernet."}
+		return finding{status: doctorWarning, detail: "Not connected to Wi-Fi on " + w.Interface + ", and no wired connection was found."}
 	case w.Band == "2.4 GHz":
 		return finding{status: doctorWarning, detail: fmt.Sprintf("Connected to %q on 2.4 GHz, which shares the radio with Bluetooth audio. Join a 5 GHz network from the Network page if you hear dropouts.", w.SSID)}
 	}
 	return finding{status: doctorOK, detail: fmt.Sprintf("Connected to %q on %s.", w.SSID, w.Band)}
+}
+
+// wiredConnection reports whether an interface other than loopback and the
+// Wi-Fi interface is up with an IPv4 address.
+func wiredConnection(wifi string) bool {
+	ifs, err := net.Interfaces()
+	if err != nil {
+		return false
+	}
+	for _, ifc := range ifs {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 || ifc.Name == wifi {
+			continue
+		}
+		addrs, _ := ifc.Addrs()
+		for _, ad := range addrs {
+			if ip, _, err := net.ParseCIDR(ad.String()); err == nil && ip.To4() != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func plural(n int, one, many string) string {

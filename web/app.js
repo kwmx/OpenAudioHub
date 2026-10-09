@@ -465,6 +465,8 @@ function doctorSection(){
 async function runDoctor(fix){
   if(model.doctorBusy)return;model.doctorBusy=true;render(true);
   try{const r=normalizeDoctor(fix?await post('/api/doctor/fix',fix):await api('/api/doctor'));model.doctor=r;
+    // Fixes change service states; refresh the rest of the page so it agrees.
+    if(fix&&model.diagnostics)await loadDiagnostics();
     if(fix){const failed=r.checks.filter(c=>c.fixError).length;toast(failed?`${r.fixed} fixed, ${failed} could not be fixed`:`${r.fixed} fixed`,failed?'error':undefined);}}
   catch(e){toast(e.message,'error')}
   finally{model.doctorBusy=false;render(true)}
@@ -610,7 +612,7 @@ app.addEventListener('click',async e=>{
     if(action==='password-change'){const cur=document.querySelector('#pw-current').value,n=document.querySelector('#pw-new').value,a=document.querySelector('#pw-again').value;if(n!==a)throw new Error('New passwords do not match');await post('/api/system/password',{Current:cur,New:n});toast('Password changed');model.localMixer=null;model.localAudio=null;model.minRevision=0;model.locked=true;model.state=null;closeEvents();render();return}
     if(action==='diag-refresh'){await loadDiagnostics();render();return}
     if(action==='doctor-run'){await runDoctor();return}
-    if(action==='doctor-fix-all'){const n=model.doctor?.fixable||0;if(!confirm(`Apply ${n} fixes? Services may be started and Bluetooth settings saved. Bluetooth itself is not restarted.`))return;await runDoctor({all:true});return}
+    if(action==='doctor-fix-all'){const n=model.doctor?.fixable||0;if(!confirm(`Apply ${n} fix${n===1?'':'es'}? Services may be started and Bluetooth settings saved; fixes that become possible along the way, such as powering on the adapter once Bluetooth runs, are applied too. Bluetooth itself is not restarted.`))return;await runDoctor({all:true});return}
     if(action.startsWith('doctor-fix:')){await runDoctor({ids:[action.slice('doctor-fix:'.length)]});return}
     if(action==='diag-copy'){await navigator.clipboard.writeText(JSON.stringify({system:model.state.system,wifi:model.state.wifi,health:model.state.health,devices:model.state.devices.filter(x=>x.role||x.connected),diagnostics:model.diagnostics},null,2));toast('Diagnostics copied');return}
   }catch(x){toast(x.message,'error')}
