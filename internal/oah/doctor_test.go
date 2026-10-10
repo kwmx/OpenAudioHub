@@ -91,7 +91,7 @@ func (f *fakeHub) run(name string, args ...string) (string, error) {
 		}
 		out := f.busctl
 		if f.trusted {
-			out = strings.ReplaceAll(out, `"Trusted":{"type":"b","data":false}`, `"Trusted":{"type":"b","data":true}`)
+			out = strings.ReplaceAll(out, `"Trusted" b false`, `"Trusted" b true`)
 		}
 		return out, nil
 	case "runuser":
@@ -114,7 +114,7 @@ func (f *fakeHub) called(prefix string) bool {
 }
 
 func healthyFake(t *testing.T) *fakeHub {
-	b, err := os.ReadFile("testdata/busctl-managed-objects.json")
+	b, err := os.ReadFile("testdata/busctl-managed-objects.txt")
 	if err != nil {
 		t.Fatal(err)
 	}

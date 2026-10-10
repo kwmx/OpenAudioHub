@@ -93,6 +93,7 @@ func doctorChecks() []doctorCheckDef {
 		{id: "bluetooth-name", area: "bluetooth", title: "Bluetooth name", run: (*App).checkBluetoothName},
 		{id: "pairing-agent", area: "bluetooth", title: "Pairing helper", run: (*App).checkPairingAgent},
 		{id: "bluez-config", area: "bluetooth", title: "Bluetooth settings", run: (*App).checkBluezConfig},
+		{id: "device-list", area: "bluetooth", title: "Device list", run: (*App).checkDeviceList},
 		{id: "pairing-mode", area: "bluetooth", title: "Pairing mode", daemonOnly: true, run: (*App).checkPairingMode},
 		{id: "assigned-devices", area: "bluetooth", title: "Assigned devices", run: (*App).checkAssignedDevices},
 		{id: "connect-retries", area: "bluetooth", title: "Automatic reconnects", daemonOnly: true, run: (*App).checkConnectRetries},
@@ -441,6 +442,17 @@ func (a *App) checkBluezConfig() finding {
 			return "Saved. Bluetooth reads it at start, so it applies after the next reboot.", nil
 		},
 	}
+}
+
+func (a *App) checkDeviceList() finding {
+	if a.unitState("bluetooth.service") != "active" {
+		return finding{status: doctorSkipped, detail: "Waiting for the Bluetooth service."}
+	}
+	snap, err := a.bluezSnapshot()
+	if err != nil {
+		return finding{status: doctorWarning, detail: "Reading devices from BlueZ in one call failed, so the list uses the slower bluetoothctl method and shows fewer names: " + err.Error()}
+	}
+	return finding{status: doctorOK, detail: fmt.Sprintf("BlueZ reports %d devices.", len(snap))}
 }
 
 func (a *App) checkPairingMode() finding {

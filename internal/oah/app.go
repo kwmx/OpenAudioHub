@@ -56,6 +56,10 @@ type App struct {
 	logMu           sync.Mutex
 	logs            []string
 
+	// Last bluezSnapshot error, so a failing snapshot is logged once per change.
+	snapshotMu  sync.Mutex
+	snapshotErr string
+
 	// Unassigned sources reconcile disconnected, so the UI can say why.
 	policedMu sync.Mutex
 	policed   map[string]time.Time
