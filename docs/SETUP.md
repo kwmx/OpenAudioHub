@@ -1,4 +1,4 @@
-# Setup and upgrade: OpenAudioHub 1.0.4
+# Setup and upgrade: OpenAudioHub 1.0.5
 
 This is not a hardware-qualified appliance image.
 Read `VALIDATION.md` and complete the acceptance checks below before relying on
@@ -9,9 +9,9 @@ it. Keep any existing working setup until the cold-boot and playback checks pass
 Use a **new folder** rather than mixing files from previous versions:
 
 ```bash
-mkdir -p ~/openaudiohub-upgrades/1.0.4
-unzip OpenAudioHub-1.0.4.zip -d ~/openaudiohub-upgrades/1.0.4
-cd ~/openaudiohub-upgrades/1.0.4/OpenAudioHub
+mkdir -p ~/openaudiohub-upgrades/1.0.5
+unzip OpenAudioHub-1.0.5.zip -d ~/openaudiohub-upgrades/1.0.5
+cd ~/openaudiohub-upgrades/1.0.5/OpenAudioHub
 ```
 
 The ZIP contains the full source, scripts, frontend, test report, and ARM64/AMD64
@@ -77,7 +77,7 @@ systemctl --user status openaudiohub-bluealsa-aplay.service --no-pager
 sudo stat -c '%a %U:%G %n' /etc/openaudiohub/{config,audio}.json
 ```
 
-Expected daemon version: `1.0.4`. The legacy **user** `bluealsa-aplay` service
+Expected daemon version: `1.0.5`. The legacy **user** `bluealsa-aplay` service
 should be absent/inactive. The managed player may wait for an assigned receiver.
 `config.json` must stay `600 root:root`; `audio.json` is the non-secret `644`
 projection used by the unprivileged bridge. Do not chmod the private file to 644.
@@ -143,6 +143,16 @@ adapter pairable for the duration of each pairing and only reports success once
 the key is on disk. A device affected by the old behaviour says so on its card
 ("Paired for this session only"), and the doctor flags it if it is assigned.
 Press **Forget** on that device, then **Pair** it again.
+
+### The device list shows many "Nearby device" entries
+
+1.0.3 and 1.0.4 read devices through `busctl --json`, which fails as soon as
+any nearby device advertises manufacturer data (most phones and LE gadgets).
+The daemon then fell back to the old list, which names few devices. 1.0.5
+reads busctl's plain output instead, logs if that ever fails, and the doctor's
+**Device list** check reports it. Devices that have no name and no Bluetooth
+class are LE-only gadgets that cannot carry audio, and are no longer listed
+unless paired or assigned.
 
 The installer sets these in `/etc/bluetooth/main.conf`. They apply after the
 next reboot or `sudo systemctl restart bluetooth`, which drops every audio link:

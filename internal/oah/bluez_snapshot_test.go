@@ -6,14 +6,17 @@ import (
 	"time"
 )
 
-// The fixture is real busctl output, captured from a stand-in BlueZ
+// The fixture is real busctl text output, captured from a stand-in BlueZ
 // ObjectManager serving a Windows PC, an LE-only beacon and unnamed headphones.
+// The PC and the beacon advertise ManufacturerData (a{qv}) and the beacon
+// AdvertisingData (a{yv}); busctl --json refuses that reply outright, which is
+// how 1.0.3 and 1.0.4 fell back to the old device list on real hubs.
 func TestParseManagedObjectsFromBusctl(t *testing.T) {
-	b, err := os.ReadFile("testdata/busctl-managed-objects.json")
+	b, err := os.ReadFile("testdata/busctl-managed-objects.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := parseManagedObjects(b)
+	snap, err := parseManagedObjects(string(b))
 	if err != nil {
 		t.Fatal(err)
 	}

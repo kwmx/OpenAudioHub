@@ -2,8 +2,6 @@ package oah
 
 import (
 	"bufio"
-	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,77 +40,13 @@ const (
 )
 
 func (a *App) bluezSnapshot() (map[string]bluezDevice, error) {
-	out, err := a.run.Run(4*time.Second, "busctl", "--json=short", "call", "org.bluez", "/",
+	// Text output, not --json: see busctl_text.go for why JSON fails on real hubs.
+	out, err := a.run.Run(4*time.Second, "busctl", "call", "org.bluez", "/",
 		"org.freedesktop.DBus.ObjectManager", "GetManagedObjects")
 	if err != nil {
 		return nil, err
 	}
-	return parseManagedObjects([]byte(out))
-}
-
-type busctlVariant struct {
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data"`
-}
-
-// parseManagedObjects decodes busctl's JSON rendering of a{oa{sa{sv}}}:
-// {"type":"a{oa{sa{sv}}}","data":[{path:{iface:{prop:{"type":..,"data":..}}}}]}.
-func parseManagedObjects(b []byte) (map[string]bluezDevice, error) {
-	var top struct {
-		Data []map[string]map[string]map[string]busctlVariant `json:"data"`
-	}
-	if err := json.Unmarshal(b, &top); err != nil {
-		return nil, err
-	}
-	if len(top.Data) != 1 {
-		return nil, fmt.Errorf("unexpected GetManagedObjects reply")
-	}
-	res := map[string]bluezDevice{}
-	for _, ifaces := range top.Data[0] {
-		props, ok := ifaces["org.bluez.Device1"]
-		if !ok {
-			continue
-		}
-		var d bluezDevice
-		str := func(k string) string {
-			var s string
-			if v, ok := props[k]; ok {
-				_ = json.Unmarshal(v.Data, &s)
-			}
-			return strings.TrimSpace(s)
-		}
-		boolean := func(k string) bool {
-			var x bool
-			if v, ok := props[k]; ok {
-				_ = json.Unmarshal(v.Data, &x)
-			}
-			return x
-		}
-		d.Addr = strings.ToUpper(cleanAddr(str("Address")))
-		if d.Addr == "" {
-			continue
-		}
-		d.AddressType = str("AddressType")
-		d.Name = str("Name")
-		d.Alias = str("Alias")
-		d.Icon = str("Icon")
-		if v, ok := props["Class"]; ok {
-			_ = json.Unmarshal(v.Data, &d.Class)
-		}
-		if v, ok := props["UUIDs"]; ok {
-			_ = json.Unmarshal(v.Data, &d.UUIDs)
-		}
-		if v, ok := props["RSSI"]; ok && json.Unmarshal(v.Data, &d.RSSI) == nil {
-			d.HasRSSI = true
-		}
-		d.Paired = boolean("Paired")
-		d.Bonded = boolean("Bonded")
-		_, d.HasBonded = props["Bonded"]
-		d.Trusted = boolean("Trusted")
-		d.Connected = boolean("Connected")
-		res[d.Addr] = d
-	}
-	return res, nil
+	return parseManagedObjects(out)
 }
 
 // classLabel names a device from its Bluetooth Class of Device, falling back to
@@ -255,6 +189,14 @@ func (a *App) deviceFromBluez(bd bluezDevice) Device {
 // advertisements, which otherwise filled the list with unnamed entries.
 func hiddenNearby(bd bluezDevice, assigned bool) bool {
 	return !assigned && !bd.Paired && !bd.Bonded && !bd.Connected && strings.EqualFold(bd.AddressType, "random")
+}
+
+// unidentifiable reports whether a listed device gives the user nothing to act
+// on: unpaired, unassigned, no name from any source and no Class of Device.
+// BR/EDR inquiry always reports a Class, so a device without one was only seen
+// over LE (smart plugs, trackers, TVs) and cannot be an A2DP input or output.
+func unidentifiable(d Device, bd bluezDevice, assigned bool) bool {
+	return !assigned && !d.Paired && !d.Connected && d.unnamed && bd.Class == 0 && len(d.Caps) == 0
 }
 
 // readBluezNameCache reads a [General] Name/Alias from a BlueZ storage file.

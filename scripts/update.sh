@@ -44,7 +44,12 @@ case "$MODE" in
 
     URL="https://github.com/${REPO}/archive/refs/tags/${TAG}.tar.gz"
     say "Downloading $URL"
-    curl -fsSL --max-time 300 -o "$WORK/src.tar.gz" "$URL" \
+    # A connection that opens but never delivers data used to hold the whole
+    # update for the 300 s limit and then fail. Abandon a stalled transfer after
+    # 30 s below 1 KB/s and retry it, so one bad connection does not end the update.
+    curl -fsSL --connect-timeout 20 --speed-limit 1024 --speed-time 30 \
+      --retry 3 --retry-delay 5 --retry-all-errors --max-time 300 \
+      -o "$WORK/src.tar.gz" "$URL" \
       || die "Download failed. Check the network and the tag name."
 
     mkdir -p "$WORK/src"

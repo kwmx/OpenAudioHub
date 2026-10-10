@@ -221,7 +221,7 @@ func TestSessionOnlyPairingIsFlagged(t *testing.T) {
 
 func TestDoctorFlagsSessionOnlyPairing(t *testing.T) {
 	fake := healthyFake(t)
-	fake.busctl = strings.Replace(fake.busctl, `"Bonded":{"type":"b","data":true}`, `"Bonded":{"type":"b","data":false}`, 1)
+	fake.busctl = strings.Replace(fake.busctl, `"Bonded" b true`, `"Bonded" b false`, 1)
 	a := doctorApp(t, fake)
 	if err := a.cfg.Update(func(c *Config) error { c.Slots.Inputs[0] = bondAddr; return nil }); err != nil {
 		t.Fatal(err)

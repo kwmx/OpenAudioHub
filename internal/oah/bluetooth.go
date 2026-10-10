@@ -83,7 +83,9 @@ func (a *App) listBluetoothDevices(transports []Transport) ([]Device, error) {
 		}
 	}
 	var devices []Device
-	if snap, err := a.bluezSnapshot(); err == nil {
+	snap, snapErr := a.bluezSnapshot()
+	a.noteSnapshotResult(snapErr)
+	if snapErr == nil {
 		devices = a.devicesFromSnapshot(snap, assigned)
 	} else {
 		var listErr error
@@ -103,7 +105,11 @@ func (a *App) devicesFromSnapshot(snap map[string]bluezDevice, assigned map[stri
 		if hiddenNearby(bd, assigned[addr]) {
 			continue
 		}
-		devices = append(devices, a.deviceFromBluez(bd))
+		d := a.deviceFromBluez(bd)
+		if unidentifiable(d, bd, assigned[addr]) {
+			continue
+		}
+		devices = append(devices, d)
 	}
 	// Assigned devices must remain represented during transient BlueZ resets.
 	for addr := range assigned {
@@ -112,6 +118,26 @@ func (a *App) devicesFromSnapshot(snap map[string]bluezDevice, assigned map[stri
 		}
 	}
 	return devices
+}
+
+// noteSnapshotResult logs when the one-call device snapshot starts failing or
+// fails differently, and when it recovers. The fallback keeps the list working
+// but shows far fewer names, so a silent failure looked like a naming bug.
+func (a *App) noteSnapshotResult(err error) {
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	a.snapshotMu.Lock()
+	changed := msg != a.snapshotErr
+	a.snapshotErr = msg
+	a.snapshotMu.Unlock()
+	switch {
+	case changed && err != nil:
+		a.logf("Bluetooth device snapshot failed, using the slower bluetoothctl list: %v", err)
+	case changed:
+		a.logf("Bluetooth device snapshot working again")
+	}
 }
 
 // devicesFromBluetoothctl is the fallback when the D-Bus snapshot is unavailable.
