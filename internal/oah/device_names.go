@@ -136,7 +136,7 @@ func bluezStoredNames(addr string) []string {
 		return nil
 	}
 	out := []string{}
-	for _, p := range bluezNameCachePaths("/var/lib/bluetooth", addr) {
+	for _, p := range bluezNameCachePaths(bluezStorageRoot, addr) {
 		out = append(out, readBluezNameCache(p, addr)...)
 	}
 	return out

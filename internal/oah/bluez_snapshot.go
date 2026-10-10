@@ -29,8 +29,11 @@ type bluezDevice struct {
 	HasRSSI     bool
 	Paired      bool
 	Bonded      bool
-	Trusted     bool
-	Connected   bool
+	// HasBonded is false on BlueZ versions without the Bonded property, where a
+	// session-only pairing cannot be told apart from a stored one.
+	HasBonded bool
+	Trusted   bool
+	Connected bool
 }
 
 const (
@@ -104,6 +107,7 @@ func parseManagedObjects(b []byte) (map[string]bluezDevice, error) {
 		}
 		d.Paired = boolean("Paired")
 		d.Bonded = boolean("Bonded")
+		_, d.HasBonded = props["Bonded"]
 		d.Trusted = boolean("Trusted")
 		d.Connected = boolean("Connected")
 		res[d.Addr] = d
@@ -236,6 +240,7 @@ func (a *App) deviceFromBluez(bd bluezDevice) Device {
 	if d.Connected {
 		d.Status = "connected"
 	}
+	d.Reason = sessionOnlyReason(bd)
 	d.Kind = kindFromCaps(d.Caps)
 	if d.Kind == "unknown" {
 		d.Kind = kindFromClass(bd.Class, bd.Icon)
