@@ -110,3 +110,41 @@ func TestBluetoothTimeoutsAreGenerous(t *testing.T) {
 		t.Fatalf("connect timeout %v should not exceed pair timeout %v", connectTimeout, pairTimeout)
 	}
 }
+
+// Paging an absent device stalls the links that are playing, so while audio is
+// heard a device that failed to answer is retried only every streamingRetry.
+func TestAbsentDevicesAreRetriedRarelyWhileAudioPlays(t *testing.T) {
+	a := &App{}
+	const addr = "AA:BB:CC:DD:EE:01"
+	now := time.Now()
+	a.noteConnectAttempt(addr, false, now)
+	playing := []Transport{
+		{UUID: "Audio Sink (0000110b-0000-1000-8000-00805f9b34fb)", State: "active"},
+		{UUID: "Audio Source (0000110a-0000-1000-8000-00805f9b34fb)", State: "active"},
+	}
+	a.noteTransports(playing)
+	if !a.connectTooSoon(addr, now.Add(time.Minute)) {
+		t.Fatal("while audio plays the 30 s backoff must not apply")
+	}
+	if a.connectTooSoon(addr, now.Add(streamingRetry+time.Second)) {
+		t.Fatal("the device must still be retried eventually")
+	}
+
+	// A source playing with no output connected is heard by nobody: keep
+	// looking for the output at the normal pace.
+	a.noteTransports(playing[:1])
+	if a.connectTooSoon(addr, now.Add(time.Minute)) {
+		t.Fatal("with no output connected the normal backoff applies")
+	}
+	// Paused source: the output's silent stream does not count as playing.
+	a.noteTransports([]Transport{{UUID: playing[0].UUID, State: "idle"}, playing[1]})
+	if a.connectTooSoon(addr, now.Add(time.Minute)) {
+		t.Fatal("a paused source must not slow reconnects")
+	}
+
+	// A device that has not failed is tried straight away even while playing.
+	a.noteTransports(playing)
+	if a.connectTooSoon("AA:BB:CC:DD:EE:02", now) {
+		t.Fatal("a first attempt is never delayed")
+	}
+}

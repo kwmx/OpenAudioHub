@@ -163,3 +163,54 @@ func TestDoctorReportsBrokenDeviceList(t *testing.T) {
 		t.Fatalf("working snapshot: %+v", c)
 	}
 }
+
+// Transports and the adapter address come from the same reply as the devices,
+// so one busctl call replaces one bluetoothctl process per transport.
+func TestParseBluezObjectsTransportsAndAdapter(t *testing.T) {
+	out := `a{oa{sa{sv}}} 3 ` +
+		`"/org/bluez/hci0" 1 "org.bluez.Adapter1" 1 "Address" s "11:22:33:44:55:66" ` +
+		`"/org/bluez/hci0/dev_AA_BB_CC_DD_EE_01/sep1/fd0" 1 "org.bluez.MediaTransport1" 7 ` +
+		`"Device" o "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_01" "UUID" s "0000110b-0000-1000-8000-00805f9b34fb" ` +
+		`"Codec" y 0 "Configuration" ay 4 33 21 2 53 "State" s "active" "Volume" q 100 "Delay" q 1500 ` +
+		`"/org/bluez/hci0/dev_AA_BB_CC_DD_EE_09/sep2/fd1" 1 "org.bluez.MediaTransport1" 4 ` +
+		`"UUID" s "0000110a-0000-1000-8000-00805f9b34fb" "Codec" y 2 "Configuration" ay 6 128 0 140 0 0 0 "State" s "idle"`
+	objs, err := parseBluezObjects(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if objs.Adapter != "11:22:33:44:55:66" {
+		t.Fatalf("adapter = %q", objs.Adapter)
+	}
+	if len(objs.Transports) != 2 {
+		t.Fatalf("transports = %+v", objs.Transports)
+	}
+	in, out2 := objs.Transports[0], objs.Transports[1]
+	if in.Addr != "AA:BB:CC:DD:EE:01" || !strings.Contains(in.UUID, "Audio Sink") || in.Codec != "SBC" || in.Rate != 44100 ||
+		in.SBCMaxBitpool != 53 || in.State != "active" || !in.VolumeKnown || in.Volume != 100 || !in.DelayKnown || in.Delay != 1500 {
+		t.Fatalf("input transport = %+v", in)
+	}
+	if out2.Addr != "AA:BB:CC:DD:EE:09" || !strings.Contains(out2.UUID, "Audio Source") || out2.Codec != "AAC" || out2.Rate != 48000 || out2.VolumeKnown || out2.DelayKnown {
+		t.Fatalf("output transport = %+v", out2)
+	}
+}
+
+func TestDescribeA2DPConfig(t *testing.T) {
+	cases := []struct {
+		codec byte
+		conf  []byte
+		name  string
+		rate  int
+	}{
+		{0x00, []byte{0x11, 0x15, 2, 35}, "SBC", 48000},
+		{0x02, []byte{0x80, 0x01, 0x0c, 0, 0, 0}, "AAC", 44100},
+		{0xff, []byte{0x4f, 0, 0, 0, 0x01, 0, 0x22}, "aptX", 0},
+		{0xff, []byte{0x2d, 0x01, 0, 0, 0xaa, 0, 0x34, 0x07}, "LDAC", 0},
+		{0x04, nil, "0x04", 0},
+	}
+	for _, c := range cases {
+		name, rate, _ := describeA2DPConfig(c.codec, c.conf)
+		if name != c.name || rate != c.rate {
+			t.Errorf("codec %#x %v: got %q %d, want %q %d", c.codec, c.conf, name, rate, c.name, c.rate)
+		}
+	}
+}

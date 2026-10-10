@@ -21,7 +21,15 @@ func withBluezStore(t *testing.T) func(addr, info string) {
 	bluezStorageRoot = root
 	oldWait := pairKeyWait
 	pairKeyWait = time.Millisecond
-	t.Cleanup(func() { bluezStorageRoot, pairKeyWait = old, oldWait })
+	oldAdapter := adapterStoreGlob()
+	setCurrentAdapter("")
+	t.Cleanup(func() {
+		bluezStorageRoot, pairKeyWait = old, oldWait
+		if oldAdapter == "*" {
+			oldAdapter = ""
+		}
+		setCurrentAdapter(oldAdapter)
+	})
 	return func(addr, info string) {
 		dir := filepath.Join(root, "11:22:33:44:55:66", addr)
 		if err := os.MkdirAll(dir, 0700); err != nil {
@@ -56,6 +64,28 @@ func TestBluezBondHasKey(t *testing.T) {
 	withBluezStore(t)
 	if bluezBondHasKey(bondAddr) {
 		t.Fatal("a device with no record has no key")
+	}
+}
+
+// BlueZ keeps one device store per adapter. A key another adapter left behind
+// (a USB dongle used earlier, or a replaced board) does not let this adapter
+// reconnect, so it must not count once the adapter in use is known.
+func TestBondKeyIsScopedToTheAdapterInUse(t *testing.T) {
+	write := withBluezStore(t)
+	write(bondAddr, "[General]\nName=Headphones\n[LinkKey]\nKey=0011\n") // stored under 11:22:33:44:55:66
+	if !bluezBondHasKey(bondAddr) {
+		t.Fatal("while the adapter is unknown, any adapter's key counts")
+	}
+	setCurrentAdapter("66:55:44:33:22:11")
+	if bluezBondHasKey(bondAddr) {
+		t.Fatal("a key stored by another adapter must not count")
+	}
+	if r := lostBondReason(bondAddr, false); r != "" {
+		t.Fatalf("another adapter's record is not this adapter's lost bond: %q", r)
+	}
+	setCurrentAdapter("11:22:33:44:55:66")
+	if !bluezBondHasKey(bondAddr) {
+		t.Fatal("the adapter's own key must count")
 	}
 }
 
@@ -145,6 +175,35 @@ func TestMakeBondable(t *testing.T) {
 	a = &App{run: runner{fake: rec.run}}
 	if _, err := a.makeBondable(); err == nil {
 		t.Fatal("a failure to make the adapter pairable must stop the pairing")
+	}
+}
+
+// A pairing started inside the pairing window can outlast it. Closing the window
+// must not switch pairable off under that pairing, or the kernel downgrades it to
+// one that stores no key; the pairing switches it off when it finishes.
+func TestPairingWindowClosingDuringAPairingKeepsItBondable(t *testing.T) {
+	rec := &recordedRunner{}
+	a := &App{run: runner{fake: rec.run}, pairing: PairingState{Active: true, Until: time.Now().Add(time.Minute)}}
+	restore, err := a.makeBondable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.setPairing(false); err != nil { // the window times out mid-pairing
+		t.Fatal(err)
+	}
+	if rec.has("bluetoothctl pairable off") {
+		t.Fatal("pairable must stay on while the pairing runs")
+	}
+	if !rec.has("bluetoothctl discoverable off") {
+		t.Fatal("the hub must still stop being discoverable when the window closes")
+	}
+	restore()
+	if !rec.has("bluetoothctl pairable off") {
+		t.Fatal("the finished pairing must switch pairable off")
+	}
+	restore() // a second call must not release another pairing's hold
+	if a.bondHolds != 0 {
+		t.Fatalf("bondHolds = %d, want 0", a.bondHolds)
 	}
 }
 

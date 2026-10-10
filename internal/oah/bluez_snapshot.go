@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -39,14 +40,70 @@ const (
 	uuidA2DPSink   = "0000110b-0000-1000-8000-00805f9b34fb"
 )
 
+// bluezSnapshotTTL lets the calls of one state build or reconcile pass share a
+// single GetManagedObjects reply. Each reply serializes every object bluetoothd
+// knows, so asking for it once per consumer multiplied that work for nothing.
+// A variable so tests that change the fake bus between calls can turn it off.
+var bluezSnapshotTTL = 750 * time.Millisecond
+
 func (a *App) bluezSnapshot() (map[string]bluezDevice, error) {
+	objs, err := a.bluezObjectsSnapshot()
+	return objs.Devices, err
+}
+
+func (a *App) bluezObjectsSnapshot() (bluezObjects, error) {
+	a.snapCacheMu.Lock()
+	defer a.snapCacheMu.Unlock()
+	if bluezSnapshotTTL > 0 && !a.snapCacheAt.IsZero() && time.Since(a.snapCacheAt) < bluezSnapshotTTL {
+		return a.snapCache, a.snapCacheErr
+	}
 	// Text output, not --json: see busctl_text.go for why JSON fails on real hubs.
 	out, err := a.run.Run(4*time.Second, "busctl", "call", "org.bluez", "/",
 		"org.freedesktop.DBus.ObjectManager", "GetManagedObjects")
-	if err != nil {
-		return nil, err
+	var objs bluezObjects
+	if err == nil {
+		objs, err = parseBluezObjects(out)
 	}
-	return parseManagedObjects(out)
+	if err == nil && objs.Adapter != "" {
+		setCurrentAdapter(objs.Adapter)
+	}
+	a.snapCache, a.snapCacheErr, a.snapCacheAt = objs, err, time.Now()
+	return objs, err
+}
+
+// invalidateBluezSnapshot makes the next snapshot read the bus again. Called
+// after the hub changes Bluetooth state itself, so it never reports the state
+// from before its own action.
+func (a *App) invalidateBluezSnapshot() {
+	a.snapCacheMu.Lock()
+	a.snapCacheAt = time.Time{}
+	a.snapCacheMu.Unlock()
+}
+
+// currentAdapter is the address of the adapter the hub uses, learned from the
+// BlueZ snapshot. BlueZ keeps one device store per adapter, so key lookups must
+// stay inside it: a key left behind by another (or an earlier) adapter does not
+// let this one reconnect.
+var currentAdapter struct {
+	sync.Mutex
+	addr string
+}
+
+func setCurrentAdapter(addr string) {
+	currentAdapter.Lock()
+	currentAdapter.addr = cleanAddr(addr)
+	currentAdapter.Unlock()
+}
+
+// adapterStoreGlob is the device-store directory pattern for the adapter in use,
+// or every adapter while it is not known yet.
+func adapterStoreGlob() string {
+	currentAdapter.Lock()
+	defer currentAdapter.Unlock()
+	if currentAdapter.addr != "" {
+		return currentAdapter.addr
+	}
+	return "*"
 }
 
 // classLabel names a device from its Bluetooth Class of Device, falling back to

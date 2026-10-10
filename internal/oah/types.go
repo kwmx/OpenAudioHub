@@ -137,6 +137,9 @@ type Health struct {
 		State string `json:"state"`
 		Value string `json:"value"`
 		Xruns int    `json:"xruns"`
+		// Playing is set while a source plays to a connected output; see
+		// noteTransports.
+		Playing bool `json:"playing"`
 	} `json:"audio"`
 	System struct {
 		State string `json:"state"`

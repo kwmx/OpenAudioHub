@@ -224,9 +224,18 @@ func (a *App) reconcileRoutes(reason string) {
 	now := time.Now()
 
 	c := a.cfg.Get()
-	connected := a.bluetoothDeviceSubset("Connected")
-	if connected == nil {
-		connected = map[string]bool{}
+	// One fresh GetManagedObjects reply serves both the connected set and the
+	// transport list below.
+	a.invalidateBluezSnapshot()
+	connected := map[string]bool{}
+	if objs, err := a.bluezObjectsSnapshot(); err == nil {
+		for addr, d := range objs.Devices {
+			if d.Connected {
+				connected[addr] = true
+			}
+		}
+	} else if set := a.bluetoothDeviceSubset("Connected"); set != nil {
+		connected = set
 	}
 	// BlueZ's generic Device1 Connected flag only means that an ACL link exists.
 	// A source can remain ACL-connected after its A2DP profile failed, which made
@@ -592,6 +601,14 @@ func (a *App) sinkNameFor(addr string) string {
 }
 
 func (a *App) setDefaultOutput(addr string) {
+	// Reconcile asks for this on every pass. The output is normally the default
+	// already, and one query is cheaper than listing every sink and setting it.
+	if cur, err := a.userPactl("get-default-sink"); err == nil {
+		needle := strings.ReplaceAll(strings.ToUpper(cleanAddr(addr)), ":", "_")
+		if needle != "" && strings.Contains(strings.ToUpper(cur), needle) {
+			return
+		}
+	}
 	if name := a.sinkNameFor(addr); name != "" {
 		_, _ = a.userPactl("set-default-sink", name)
 	}
@@ -603,6 +620,12 @@ func (a *App) applyMixer() {
 	c := a.cfg.Get()
 	blocks := a.sinkInputBlocks()
 	bluealsaAddrs := a.bluealsaPCMAddresses()
+	// Remember what each stream was last given and send only changes. Reconcile
+	// applies the mixer on every pass, which used to cost two pactl processes per
+	// input every 45 s with nothing to change. A stream that reappears gets a new
+	// id, so it is always set again.
+	applied := map[string]string{}
+	defer func() { a.mixerApplied = applied }()
 	for i, addr := range c.Slots.Inputs {
 		if addr == "" || i >= len(c.Mixer.Gains) {
 			continue
@@ -620,19 +643,27 @@ func (a *App) applyMixer() {
 		if i < len(c.Mixer.Placement) {
 			placement = c.Mixer.Placement[i]
 		}
+		left, right := fmt.Sprintf("%d%%", vol), fmt.Sprintf("%d%%", vol)
 		switch placement {
 		case "left":
-			_, _ = a.userPactl("set-sink-input-volume", id, fmt.Sprintf("%d%%", vol), "0%")
+			right = "0%"
 		case "right":
-			_, _ = a.userPactl("set-sink-input-volume", id, "0%", fmt.Sprintf("%d%%", vol))
-		default:
-			_, _ = a.userPactl("set-sink-input-volume", id, fmt.Sprintf("%d%%", vol), fmt.Sprintf("%d%%", vol))
+			left = "0%"
 		}
 		mute := "0"
 		if c.Mixer.MasterMute || (i < len(c.Mixer.Mutes) && c.Mixer.Mutes[i]) {
 			mute = "1"
 		}
-		_, _ = a.userPactl("set-sink-input-mute", id, mute)
+		want := left + " " + right + " " + mute
+		if a.mixerApplied[id] == want {
+			applied[id] = want
+			continue
+		}
+		_, errVol := a.userPactl("set-sink-input-volume", id, left, right)
+		_, errMute := a.userPactl("set-sink-input-mute", id, mute)
+		if errVol == nil && errMute == nil {
+			applied[id] = want
+		}
 	}
 }
 
@@ -673,10 +704,13 @@ func (a *App) audioUserCommand(timeout time.Duration, name string, args ...strin
 func (a *App) userPactl(args ...string) (string, error) {
 	return a.audioUserCommand(5*time.Second, "pactl", args...)
 }
+
+var sinkInputRE = regexp.MustCompile(`Sink Input #(\d+)`)
+
 func (a *App) sinkInputBlocks() map[string]string {
 	out, _ := a.userPactl("list", "sink-inputs")
 	res := map[string]string{}
-	re := regexp.MustCompile(`Sink Input #(\d+)`)
+	re := sinkInputRE
 	var id string
 	var b strings.Builder
 	flush := func() {
@@ -748,9 +782,11 @@ func (a *App) audioReady() error {
 	// streaming, which previously produced false "Audio graph unavailable" UI.
 	out, err := a.audioUserCommand(3*time.Second, "systemctl", "--user", "is-active", "pipewire.service", "wireplumber.service")
 	if err == nil && strings.Count(strings.TrimSpace(out), "active") >= 2 {
+		a.audioOKAt.Store(time.Now().UnixNano())
 		return nil
 	}
 	if _, wpErr := a.audioUserCommand(3*time.Second, "wpctl", "status", "-n"); wpErr == nil {
+		a.audioOKAt.Store(time.Now().UnixNano())
 		return nil
 	}
 	go func() { _ = a.ensureAudioSession() }()
@@ -831,6 +867,11 @@ func (a *App) audioSupervisor() {
 	t := time.NewTicker(20 * time.Second)
 	defer t.Stop()
 	for range t.C {
+		// The state build checks the graph every 10 s; probing again here would
+		// only double the processes started while audio plays.
+		if ok := a.audioOKAt.Load(); ok != 0 && time.Since(time.Unix(0, ok)) < 25*time.Second {
+			continue
+		}
 		if _, err := a.audioUserCommand(2*time.Second, "wpctl", "status", "-n"); err != nil {
 			a.logf("audio supervisor: PipeWire unavailable, attempting recovery: %v", err)
 			_ = a.ensureAudioSession()
