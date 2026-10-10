@@ -187,3 +187,31 @@ func TestDoctorChecksAdapterVisibilityInPairingMode(t *testing.T) {
 		t.Fatal("the fix must re-apply pairing mode on the adapter")
 	}
 }
+
+// Staging runs when any input is due; Input 1 must still be tried first, before
+// BlueALSA starts, or a later input can take PipeWire's endpoint and receive the
+// settings meant for BlueALSA's slot.
+func TestStagingTriesInputOneFirstEvenWhileBackingOff(t *testing.T) {
+	rec := &recordedRunner{}
+	a := reconcileApp(t, rec, "", "AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02")
+	now := time.Now()
+	a.noteConnectAttempt("AA:BB:CC:DD:EE:01", false, now)
+	a.noteConnectAttempt("AA:BB:CC:DD:EE:01", false, now) // Input 1 backing off; Input 2 due
+	a.reconcileRoutes("auto-connect supervisor")
+	idx := func(call string) int {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		for i, c := range rec.calls {
+			if c == call {
+				return i
+			}
+		}
+		return -1
+	}
+	first := idx("bluetoothctl connect AA:BB:CC:DD:EE:01 a2dp-source")
+	start := idx("systemctl start openaudiohub-bluealsa.service")
+	second := idx("bluetoothctl connect AA:BB:CC:DD:EE:02 a2dp-source")
+	if first < 0 || start < 0 || second < 0 || !(first < start && start < second) {
+		t.Fatalf("want Input 1, then BlueALSA, then Input 2; got indexes %d %d %d in %v", first, start, second, rec.calls)
+	}
+}

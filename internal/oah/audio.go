@@ -369,7 +369,7 @@ func (a *App) reconcileRoutes(reason string) {
 
 		// Input 1 (or the only configured input) gets the primary PipeWire SEP.
 		first := inputs[0]
-		if a.stageInput(first, forceRebind, now) {
+		if a.stagePrimary(first, forceRebind, now) {
 			connected[first] = true
 			inputMedia[first] = true
 		}
@@ -476,6 +476,27 @@ func (a *App) autoConnect(addr, profile, what string, now time.Time) bool {
 	a.noteConnectAttempt(addr, err == nil, now)
 	if err != nil {
 		a.logf("auto-connect %s %s: %v", what, addr, err)
+		return false
+	}
+	return true
+}
+
+// stagePrimary connects Input 1 during staging. Once staging runs at all, Input 1
+// is always tried first, backoff or not: staging only runs when some input is
+// due, and skipping Input 1 there let a later input take PipeWire's endpoint,
+// which put BlueALSA's receiver settings on the wrong slot. Pairing mode never
+// stages, so this cannot page during pairing.
+func (a *App) stagePrimary(addr string, forceRebind bool, now time.Time) bool {
+	if forceRebind {
+		return a.stageInput(addr, true, now)
+	}
+	if !a.autoConnectFor(addr) || a.pairingActive() {
+		return false
+	}
+	err := a.connectProfile(autoConnectTimeout, addr, "a2dp-source")
+	a.noteConnectAttempt(addr, err == nil, now)
+	if err != nil {
+		a.logf("auto-connect input %s: %v", addr, err)
 		return false
 	}
 	return true
