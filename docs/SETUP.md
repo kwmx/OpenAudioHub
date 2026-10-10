@@ -1,4 +1,4 @@
-# Setup and upgrade: OpenAudioHub 1.0.5
+# Setup and upgrade: OpenAudioHub 1.0.6
 
 This is not a hardware-qualified appliance image.
 Read `VALIDATION.md` and complete the acceptance checks below before relying on
@@ -9,9 +9,9 @@ it. Keep any existing working setup until the cold-boot and playback checks pass
 Use a **new folder** rather than mixing files from previous versions:
 
 ```bash
-mkdir -p ~/openaudiohub-upgrades/1.0.5
-unzip OpenAudioHub-1.0.5.zip -d ~/openaudiohub-upgrades/1.0.5
-cd ~/openaudiohub-upgrades/1.0.5/OpenAudioHub
+mkdir -p ~/openaudiohub-upgrades/1.0.6
+unzip OpenAudioHub-1.0.6.zip -d ~/openaudiohub-upgrades/1.0.6
+cd ~/openaudiohub-upgrades/1.0.6/OpenAudioHub
 ```
 
 The ZIP contains the full source, scripts, frontend, test report, and ARM64/AMD64
@@ -77,7 +77,7 @@ systemctl --user status openaudiohub-bluealsa-aplay.service --no-pager
 sudo stat -c '%a %U:%G %n' /etc/openaudiohub/{config,audio}.json
 ```
 
-Expected daemon version: `1.0.5`. The legacy **user** `bluealsa-aplay` service
+Expected daemon version: `1.0.6`. The legacy **user** `bluealsa-aplay` service
 should be absent/inactive. The managed player may wait for an assigned receiver.
 `config.json` must stay `600 root:root`; `audio.json` is the non-secret `644`
 projection used by the unprivileged bridge. Do not chmod the private file to 644.
@@ -133,6 +133,19 @@ Pair from Windows, not from the hub:
 If Windows says it cannot connect after you removed the hub on one side, turn
 on pairing mode, remove the hub in Windows, and add it again. Re-pairing a known
 device is accepted only while pairing mode is on.
+
+If Windows says the hub is **not responding**:
+
+- Pair from Windows, not from the hub. Pairing a PC from the Devices page only
+  works while the PC's own Add device screen is open, and usually fails with
+  "the device did not answer".
+- Run the doctor. Its **Pairing mode** check confirms the adapter really is
+  discoverable and pairable while pairing mode is on, and fixes it if not.
+- While pairing mode is on, the hub stops trying to reconnect devices that are
+  switched off (1.0.6). Before that, paging an absent headset kept the radio
+  too busy to answer the PC.
+- Press **Forget** on any leftover entry for the PC on the hub before pairing
+  again. Diagnostics shows the pairing helper's log, including refused pairings.
 
 ### A headset or speaker asks to pair again after every disconnect
 

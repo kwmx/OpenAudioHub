@@ -492,8 +492,36 @@ func (a *App) checkPairingMode() finding {
 				return "", os.WriteFile(pairingFlagPath, []byte("1\n"), 0644)
 			},
 		}
-	case active:
-		return finding{status: doctorOK, detail: "On; new devices can pair."}
+	}
+	// The adapter's own state is what a PC or phone sees. Pairing mode can be on
+	// in the hub while the adapter is not discoverable (for example after
+	// bluetoothd restarted), and Windows then reports the hub as not responding.
+	if props, ok := a.adapterShow(); ok {
+		visible := parseBool(props["Discoverable"]) && parseBool(props["Pairable"])
+		switch {
+		case active && !visible:
+			return finding{
+				status:   doctorProblem,
+				detail:   fmt.Sprintf("Pairing mode is on, but the adapter reports Discoverable: %s and Pairable: %s, so PCs and phones cannot find or pair with the hub.", props["Discoverable"], props["Pairable"]),
+				fixLabel: "Re-apply pairing mode",
+				fix:      func() (string, error) { return "", a.setPairing(true) },
+			}
+		case !active && parseBool(props["Discoverable"]):
+			return finding{
+				status:   doctorWarning,
+				detail:   "Pairing mode is off, but the adapter is still discoverable.",
+				fixLabel: "Turn pairing off",
+				fix: func() (string, error) {
+					if a.pairingActive() {
+						return "", nil
+					}
+					return "", a.setPairing(false)
+				},
+			}
+		}
+	}
+	if active {
+		return finding{status: doctorOK, detail: "On; the hub is discoverable and new devices can pair."}
 	}
 	return finding{status: doctorOK, detail: "Off; only known devices can connect."}
 }

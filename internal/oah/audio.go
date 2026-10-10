@@ -325,18 +325,12 @@ func (a *App) reconcileRoutes(reason string) {
 		addr := strings.ToUpper(c.Slots.Outputs[0])
 		if outputMedia[addr] {
 			a.setDefaultOutput(addr)
-		} else if a.autoConnectFor(addr) && !a.connectTooSoon(addr, now) {
+		} else if a.autoConnect(addr, "a2dp-sink", "output", now) {
 			// Even if the generic Bluetooth ACL is already connected, explicitly
 			// request A2DP when its media transport is missing.
-			_, err := a.run.Run(connectTimeout, "bluetoothctl", "connect", addr, "a2dp-sink")
-			a.noteConnectAttempt(addr, err == nil, now)
-			if err != nil {
-				a.logf("auto-connect output %s: %v", addr, err)
-			} else {
-				a.setDefaultOutput(addr)
-				connected[addr] = true
-				outputMedia[addr] = true
-			}
+			a.setDefaultOutput(addr)
+			connected[addr] = true
+			outputMedia[addr] = true
 		}
 	}
 
@@ -358,7 +352,11 @@ func (a *App) reconcileRoutes(reason string) {
 	// Reproduce that sequence at cold establishment (or an explicit input-role
 	// change), but never tear down healthy sessions during ordinary health checks.
 	forceRebind := reason == "input roles changed"
-	if len(inputs) > 0 && (forceRebind || connectedInputs == 0) {
+	// Only restage when a connection will actually be attempted. Restaging
+	// stops and restarts BlueALSA; doing it on every 45 s pass while an input is
+	// switched off cut the spare endpoints and kept the radio paging, which is
+	// when PCs and phones trying to reach the hub saw it as not responding.
+	if len(inputs) > 0 && (forceRebind || (connectedInputs == 0 && a.anyAutoConnectDue(inputs, now))) {
 		if forceRebind {
 			for _, addr := range inputs {
 				_, _ = a.run.Run(5*time.Second, "bluetoothctl", "disconnect", addr)
@@ -371,13 +369,9 @@ func (a *App) reconcileRoutes(reason string) {
 
 		// Input 1 (or the only configured input) gets the primary PipeWire SEP.
 		first := inputs[0]
-		if a.autoConnectFor(first) || forceRebind {
-			if _, err := a.run.Run(12*time.Second, "bluetoothctl", "connect", first, "a2dp-source"); err != nil {
-				a.logf("primary input connect %s: %v", first, err)
-			} else {
-				connected[first] = true
-				inputMedia[first] = true
-			}
+		if a.stageInput(first, forceRebind, now) {
+			connected[first] = true
+			inputMedia[first] = true
 		}
 
 		if len(inputs) > 1 {
@@ -389,13 +383,9 @@ func (a *App) reconcileRoutes(reason string) {
 			// establishes the remote transport before attaching the long-lived
 			// player. Beyond two sources this is experimental.
 			for _, extra := range inputs[1:] {
-				if a.autoConnectFor(extra) || forceRebind {
-					if _, err := a.run.Run(12*time.Second, "bluetoothctl", "connect", extra, "a2dp-source"); err != nil {
-						a.logf("secondary input connect %s: %v", extra, err)
-					} else {
-						connected[extra] = true
-						inputMedia[extra] = true
-					}
+				if a.stageInput(extra, forceRebind, now) {
+					connected[extra] = true
+					inputMedia[extra] = true
 				}
 				time.Sleep(250 * time.Millisecond)
 			}
@@ -419,25 +409,89 @@ func (a *App) reconcileRoutes(reason string) {
 		_, _ = a.run.Run(8*time.Second, "systemctl", "start", "openaudiohub-bluealsa-bridge.service")
 	}
 	for _, addr := range inputs {
-		if inputMedia[addr] || !a.autoConnectFor(addr) {
+		if inputMedia[addr] {
 			continue
 		}
-		if a.connectTooSoon(addr, now) {
-			continue
-		}
-		_, err := a.run.Run(connectTimeout, "bluetoothctl", "connect", addr, "a2dp-source")
-		a.noteConnectAttempt(addr, err == nil, now)
-		if err != nil {
-			a.logf("auto-connect input %s: %v", addr, err)
-		} else {
+		if a.autoConnect(addr, "a2dp-source", "input", now) {
 			connected[addr] = true
 			inputMedia[addr] = true
+			time.Sleep(350 * time.Millisecond)
 		}
-		time.Sleep(350 * time.Millisecond)
 	}
 
 	a.applyMixer()
 	a.signalRefresh()
+}
+
+// autoConnectTimeout bounds an automatic connection attempt. A present device
+// connects A2DP within a few seconds; an absent one only holds the radio.
+const autoConnectTimeout = 20 * time.Second
+
+// connectProfile asks BlueZ to connect addr, optionally to one profile. When
+// the attempt times out, or BlueZ reports one already in progress, it cancels
+// the pending Connect with Disconnect, which BlueZ documents as the way to
+// abandon a Connect that has not been answered. Killing bluetoothctl alone left
+// BlueZ paging in the background, so the next attempt failed with
+// br-connection-busy and the radio stayed busy for PCs trying to reach the hub.
+func (a *App) connectProfile(timeout time.Duration, addr, profile string) error {
+	args := []string{"connect", addr}
+	if profile != "" {
+		args = append(args, profile)
+	}
+	_, err := a.run.Run(timeout, "bluetoothctl", args...)
+	if err != nil && connectStillPending(err) {
+		_, _ = a.run.Run(5*time.Second, "bluetoothctl", "disconnect", addr)
+	}
+	return err
+}
+
+func connectStillPending(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "timed out") || strings.Contains(s, "InProgress") || strings.Contains(s, "br-connection-busy")
+}
+
+// autoConnectDue reports whether reconcile may start an automatic connection
+// to addr now. Never during pairing mode: paging an absent device keeps the
+// controller from answering the PC or phone the user is trying to add.
+func (a *App) autoConnectDue(addr string, now time.Time) bool {
+	return a.autoConnectFor(addr) && !a.connectTooSoon(addr, now) && !a.pairingActive()
+}
+
+func (a *App) anyAutoConnectDue(addrs []string, now time.Time) bool {
+	for _, addr := range addrs {
+		if a.autoConnectDue(addr, now) {
+			return true
+		}
+	}
+	return false
+}
+
+// autoConnect makes one automatic, backed-off connection attempt and reports
+// whether it succeeded.
+func (a *App) autoConnect(addr, profile, what string, now time.Time) bool {
+	if !a.autoConnectDue(addr, now) {
+		return false
+	}
+	err := a.connectProfile(autoConnectTimeout, addr, profile)
+	a.noteConnectAttempt(addr, err == nil, now)
+	if err != nil {
+		a.logf("auto-connect %s %s: %v", what, addr, err)
+		return false
+	}
+	return true
+}
+
+// stageInput connects an input during staging: unconditionally after a role
+// change, otherwise as a normal automatic attempt.
+func (a *App) stageInput(addr string, forceRebind bool, now time.Time) bool {
+	if !forceRebind {
+		return a.autoConnect(addr, "a2dp-source", "input", now)
+	}
+	if err := a.connectProfile(12*time.Second, addr, "a2dp-source"); err != nil {
+		a.logf("input connect %s: %v", addr, err)
+		return false
+	}
+	return true
 }
 
 // adoptIntoFreeInput puts addr in the first empty input slot of c and enables

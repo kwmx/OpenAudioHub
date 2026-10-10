@@ -247,7 +247,9 @@ func (a *App) handleBTAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		msg := "Bluetooth did not complete that action. Try again, or check Diagnostics."
-		if q.Action == "forget" {
+		if hint := bluezErrorHint(q.Action, err); hint != "" {
+			msg = hint
+		} else if q.Action == "forget" {
 			msg = "The device was unassigned but not removed. Try Forget again."
 		}
 		a.writeProblem(w, 409, msg, "bluetooth "+q.Action+" "+q.Addr, err)
