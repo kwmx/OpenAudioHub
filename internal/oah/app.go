@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -28,16 +29,22 @@ type App struct {
 	version string
 	listen  string
 
-	mu           sync.RWMutex
-	pairing      PairingState
+	mu      sync.RWMutex
+	pairing PairingState
+	// bondHolds counts outgoing pairings that need the controller bondable;
+	// see makeBondable. Guarded by mu.
+	bondHolds    int
 	networkApply *NetworkApply
 	// networkPreparing is set while a network change is being prepared, before
 	// it is recorded in networkApply; see reserveNetworkApply.
 	networkPreparing bool
 	wifiNetworks     []WiFiNetwork
 
-	audioConfigMu   sync.Mutex
-	mixerApplyMu    sync.Mutex
+	audioConfigMu sync.Mutex
+	mixerApplyMu  sync.Mutex
+	// mixerApplied is the volume and mute last sent to each sink-input id;
+	// guarded by mixerApplyMu.
+	mixerApplied    map[string]string
 	reconcileMu     sync.Mutex
 	btOpsMu         sync.Mutex
 	deviceNamesMu   sync.Mutex
@@ -47,8 +54,10 @@ type App struct {
 	deviceInfoMu sync.Mutex
 	deviceInfo   map[string]deviceInfoEntry
 	// Per-address Bluetooth connect backoff; see backoff.go.
-	connectMu       sync.Mutex
-	connectState    map[string]*connectState
+	connectMu    sync.Mutex
+	connectState map[string]*connectState
+	// streaming is set while a source is playing; see noteTransports.
+	streaming       atomic.Bool
 	stateBuildMu    sync.Mutex
 	stateCacheMu    sync.RWMutex
 	stateCache      State
@@ -59,6 +68,11 @@ type App struct {
 	// Last bluezSnapshot error, so a failing snapshot is logged once per change.
 	snapshotMu  sync.Mutex
 	snapshotErr string
+	// Short-lived GetManagedObjects cache; see bluezSnapshotTTL.
+	snapCacheMu  sync.Mutex
+	snapCache    bluezObjects
+	snapCacheErr error
+	snapCacheAt  time.Time
 
 	// Unassigned sources reconcile disconnected, so the UI can say why.
 	policedMu sync.Mutex
@@ -168,6 +182,8 @@ func (a *App) reconcileLoop() {
 }
 
 func (a *App) signalRefresh() {
+	// A refresh follows a change the hub made; describe the state after it.
+	a.invalidateBluezSnapshot()
 	select {
 	case a.refresh <- struct{}{}:
 	default:

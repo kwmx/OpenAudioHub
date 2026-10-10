@@ -50,6 +50,13 @@ monitor.bluez.rules = [
     matches = [ { node.name = "~bluez_input.*" } ]
     actions = { update-props = { bluez5.media-source-role = "playback" } }
   }
+  {
+    # Keep the output transport streaming between sounds. By default an idle
+    # node suspends after 5 s, which releases the A2DP transport; the next sound
+    # then waits for the headset to restart the stream and its start is cut off.
+    matches = [ { node.name = "~bluez_output.*" } ]
+    actions = { update-props = { session.suspend-timeout-seconds = 0 } }
+  }
 ]
 CFG
 chown "$OAH_AUDIO_USER:$OAH_AUDIO_USER" "$WP_DIR/51-openaudiohub.conf"

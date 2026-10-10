@@ -69,6 +69,7 @@ var (
 	rfkillRoot          = "/sys/class/rfkill"
 	pairingFlagPath     = "/run/openaudiohub/pairing-enabled"
 	diskCheckPath       = "/"
+	procRoot            = "/proc"
 )
 
 // doctorFixRounds bounds how often "fix all" re-checks for newly exposed problems.
@@ -99,6 +100,7 @@ func doctorChecks() []doctorCheckDef {
 		{id: "connect-retries", area: "bluetooth", title: "Automatic reconnects", daemonOnly: true, run: (*App).checkConnectRetries},
 		{id: "device-names", area: "bluetooth", title: "Saved device names", run: (*App).checkDeviceNames},
 		{id: "audio-session", area: "audio", title: "PipeWire audio", run: (*App).checkAudioSession},
+		{id: "audio-realtime", area: "audio", title: "Audio scheduling", run: (*App).checkAudioRealtime},
 		{id: "bluealsa-conflict", area: "audio", title: "Conflicting audio services", run: (*App).checkBlueALSAConflict},
 		{id: "secondary-receiver", area: "audio", title: "Extra inputs (BlueALSA)", run: (*App).checkSecondaryReceiver},
 		{id: "audio-projection", area: "audio", title: "Receiver settings file", run: (*App).checkAudioProjection},
@@ -203,6 +205,8 @@ func (a *App) runDoctor(fixIDs map[string]bool) DoctorReport {
 }
 
 func (a *App) evaluateChecks(defs []doctorCheckDef) []finding {
+	// Every pass describes the hub as it is now, after any fix just applied.
+	a.invalidateBluezSnapshot()
 	out := make([]finding, len(defs))
 	for i, d := range defs {
 		if d.daemonOnly && a.standalone {
@@ -602,6 +606,14 @@ func (a *App) checkAssignedDevices() finding {
 	return f
 }
 
+// retryPaceNote says how often the hub retries a device that does not answer.
+func (a *App) retryPaceNote() string {
+	if a.audioStreaming() {
+		return "While audio plays the hub tries at most every 10 minutes, because each try interrupts the playing audio."
+	}
+	return "The hub now waits up to 5 minutes between tries."
+}
+
 func (a *App) checkConnectRetries() finding {
 	var failing []string
 	var addrs []string
@@ -620,7 +632,7 @@ func (a *App) checkConnectRetries() finding {
 	}
 	return finding{
 		status:   doctorWarning,
-		detail:   strings.Join(failing, ", ") + ". The hub now waits up to 5 minutes between tries. Check the device is on and in range.",
+		detail:   strings.Join(failing, ", ") + ". " + a.retryPaceNote() + " Check the device is on and in range.",
 		fixLabel: "Retry now",
 		fix: func() (string, error) {
 			for _, addr := range addrs {
@@ -709,6 +721,72 @@ func (a *App) checkAudioSession() finding {
 			return "", nil
 		},
 	}
+}
+
+// checkAudioRealtime confirms PipeWire's audio thread runs with realtime
+// priority. PipeWire asks RTKit for it; without it the thread is scheduled like
+// any other process, and a busy moment (a state refresh, an SSH login, the
+// receiver build) is enough to make every stream stutter.
+func (a *App) checkAudioRealtime() finding {
+	user := a.cfg.Get().AudioUser
+	out, err := a.run.Run(3*time.Second, "pgrep", "-u", user, "-x", "pipewire")
+	pid := ""
+	if fs := strings.Fields(out); err == nil && len(fs) > 0 {
+		pid = fs[0]
+	}
+	if pid == "" {
+		return finding{status: doctorSkipped, detail: "PipeWire is not running; see PipeWire audio."}
+	}
+	if hasRealtimeThread(procRoot, pid) {
+		return finding{status: doctorOK, detail: "PipeWire's audio thread has realtime priority."}
+	}
+	detail := "PipeWire's audio thread runs without realtime priority, so audio can stutter whenever the hub is busy."
+	if a.unitState("rtkit-daemon.service") != "active" {
+		detail += " RTKit, which grants it, is not running."
+	}
+	return finding{
+		status:   doctorWarning,
+		detail:   detail,
+		fixLabel: "Restart audio with realtime priority",
+		fix: func() (string, error) {
+			if _, err := a.run.Run(8*time.Second, "systemctl", "start", "rtkit-daemon.service"); err != nil {
+				return "", err
+			}
+			// PipeWire asks for realtime priority once, when it starts.
+			_, err := a.run.Run(28*time.Second, "systemctl", "restart", "openaudiohub-audio-tuning.service")
+			a.resetMixerCache()
+			if err != nil {
+				return "", err
+			}
+			a.requestReconcile("doctor: audio restarted for realtime priority")
+			return "Audio restarted; devices reconnect by themselves.", nil
+		},
+	}
+}
+
+// hasRealtimeThread reports whether any thread of pid runs under SCHED_FIFO or
+// SCHED_RR. The policy is field 41 of /proc/<pid>/task/<tid>/stat.
+func hasRealtimeThread(root, pid string) bool {
+	stats, _ := filepath.Glob(filepath.Join(root, pid, "task", "*", "stat"))
+	for _, p := range stats {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		s := string(b)
+		// The command name (field 2) may contain spaces and parentheses; the
+		// fields after it start at the last ')'.
+		i := strings.LastIndexByte(s, ')')
+		if i < 0 {
+			continue
+		}
+		fs := strings.Fields(s[i+1:])
+		const policyField = 41 - 3 // fs[0] is field 3
+		if len(fs) > policyField && (fs[policyField] == "1" || fs[policyField] == "2") {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) checkBlueALSAConflict() finding {

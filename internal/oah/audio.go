@@ -81,7 +81,9 @@ func (a *App) applyAudioConfig(cfg AudioConfig) error {
 	// Never start an idle player merely because settings were saved. Receiver
 	// capabilities take effect only after the BlueALSA peer reconnects.
 	if graphChanged {
-		if _, err := a.run.Run(28*time.Second, "systemctl", "restart", "openaudiohub-audio-tuning.service"); err != nil {
+		_, err := a.run.Run(28*time.Second, "systemctl", "restart", "openaudiohub-audio-tuning.service")
+		a.resetMixerCache()
+		if err != nil {
 			return fmtErr("settings saved, but the audio graph could not be restarted; inspect Diagnostics")
 		}
 	}
@@ -224,9 +226,18 @@ func (a *App) reconcileRoutes(reason string) {
 	now := time.Now()
 
 	c := a.cfg.Get()
-	connected := a.bluetoothDeviceSubset("Connected")
-	if connected == nil {
-		connected = map[string]bool{}
+	// One fresh GetManagedObjects reply serves both the connected set and the
+	// transport list below.
+	a.invalidateBluezSnapshot()
+	connected := map[string]bool{}
+	if objs, err := a.bluezObjectsSnapshot(); err == nil {
+		for addr, d := range objs.Devices {
+			if d.Connected {
+				connected[addr] = true
+			}
+		}
+	} else if set := a.bluetoothDeviceSubset("Connected"); set != nil {
+		connected = set
 	}
 	// BlueZ's generic Device1 Connected flag only means that an ACL link exists.
 	// A source can remain ACL-connected after its A2DP profile failed, which made
@@ -592,9 +603,26 @@ func (a *App) sinkNameFor(addr string) string {
 }
 
 func (a *App) setDefaultOutput(addr string) {
+	// Reconcile asks for this on every pass. The output is normally the default
+	// already, and one query is cheaper than listing every sink and setting it.
+	if cur, err := a.userPactl("get-default-sink"); err == nil {
+		needle := strings.ReplaceAll(strings.ToUpper(cleanAddr(addr)), ":", "_")
+		if needle != "" && strings.Contains(strings.ToUpper(cur), needle) {
+			return
+		}
+	}
 	if name := a.sinkNameFor(addr); name != "" {
 		_, _ = a.userPactl("set-default-sink", name)
 	}
+}
+
+// resetMixerCache makes the next applyMixer send every stream its settings.
+// Sink-input ids are only unique within one pipewire-pulse run, so whatever
+// may have recreated the streams (a graph restart, a new stream) clears it.
+func (a *App) resetMixerCache() {
+	a.mixerApplyMu.Lock()
+	a.mixerApplied = nil
+	a.mixerApplyMu.Unlock()
 }
 
 func (a *App) applyMixer() {
@@ -603,6 +631,12 @@ func (a *App) applyMixer() {
 	c := a.cfg.Get()
 	blocks := a.sinkInputBlocks()
 	bluealsaAddrs := a.bluealsaPCMAddresses()
+	// Remember what each stream was last given and send only changes. Reconcile
+	// applies the mixer on every pass, which used to cost two pactl processes per
+	// input every 45 s with nothing to change. A stream that reappears gets a new
+	// id, so it is always set again.
+	applied := map[string]string{}
+	defer func() { a.mixerApplied = applied }()
 	for i, addr := range c.Slots.Inputs {
 		if addr == "" || i >= len(c.Mixer.Gains) {
 			continue
@@ -620,19 +654,27 @@ func (a *App) applyMixer() {
 		if i < len(c.Mixer.Placement) {
 			placement = c.Mixer.Placement[i]
 		}
+		left, right := fmt.Sprintf("%d%%", vol), fmt.Sprintf("%d%%", vol)
 		switch placement {
 		case "left":
-			_, _ = a.userPactl("set-sink-input-volume", id, fmt.Sprintf("%d%%", vol), "0%")
+			right = "0%"
 		case "right":
-			_, _ = a.userPactl("set-sink-input-volume", id, "0%", fmt.Sprintf("%d%%", vol))
-		default:
-			_, _ = a.userPactl("set-sink-input-volume", id, fmt.Sprintf("%d%%", vol), fmt.Sprintf("%d%%", vol))
+			left = "0%"
 		}
 		mute := "0"
 		if c.Mixer.MasterMute || (i < len(c.Mixer.Mutes) && c.Mixer.Mutes[i]) {
 			mute = "1"
 		}
-		_, _ = a.userPactl("set-sink-input-mute", id, mute)
+		want := left + " " + right + " " + mute
+		if a.mixerApplied[id] == want {
+			applied[id] = want
+			continue
+		}
+		_, errVol := a.userPactl("set-sink-input-volume", id, left, right)
+		_, errMute := a.userPactl("set-sink-input-mute", id, mute)
+		if errVol == nil && errMute == nil {
+			applied[id] = want
+		}
 	}
 }
 
@@ -673,10 +715,13 @@ func (a *App) audioUserCommand(timeout time.Duration, name string, args ...strin
 func (a *App) userPactl(args ...string) (string, error) {
 	return a.audioUserCommand(5*time.Second, "pactl", args...)
 }
+
+var sinkInputRE = regexp.MustCompile(`Sink Input #(\d+)`)
+
 func (a *App) sinkInputBlocks() map[string]string {
 	out, _ := a.userPactl("list", "sink-inputs")
 	res := map[string]string{}
-	re := regexp.MustCompile(`Sink Input #(\d+)`)
+	re := sinkInputRE
 	var id string
 	var b strings.Builder
 	flush := func() {
@@ -769,6 +814,7 @@ func (a *App) ensureAudioSession() error {
 		return err
 	}
 	a.audioLastHeal = time.Now()
+	a.resetMixerCache()
 	c := a.cfg.Get()
 	_, _ = a.run.Run(5*time.Second, "systemctl", "start", fmt.Sprintf("user@%d.service", c.AudioUID))
 	_, _ = a.audioUserCommand(8*time.Second, "systemctl", "--user", "start",
@@ -814,9 +860,15 @@ func (a *App) mixerEventSupervisor() {
 			time.Sleep(2 * time.Second)
 			continue
 		}
+		// A (re)started subscription usually means pipewire-pulse restarted, and
+		// a restarted server hands out sink-input ids from the start again.
+		a.resetMixerCache()
 		sc := bufio.NewScanner(stdout)
 		for sc.Scan() {
 			if strings.Contains(sc.Text(), "Event 'new' on sink-input") {
+				// The new stream starts at the server's default volume, and its id
+				// may be one an old stream had.
+				a.resetMixerCache()
 				time.Sleep(80 * time.Millisecond)
 				a.applyMixer()
 				a.signalRefresh()
@@ -892,6 +944,7 @@ func (a *App) applyIdentity(hostname, btName string) error {
 
 func (a *App) restartAudio() {
 	_, _ = a.run.Run(10*time.Second, "systemctl", "restart", "openaudiohub-audio-tuning.service")
+	a.resetMixerCache()
 	a.requestReconcile("manual audio restart")
 }
 func (a *App) systemAction(action string) error {

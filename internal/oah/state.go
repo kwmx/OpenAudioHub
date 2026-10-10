@@ -62,6 +62,7 @@ func (a *App) buildState(includeDiag bool) State {
 		h.Bluetooth.Value = fmt.Sprintf("%d input · %d output", activeIn, activeOut)
 	}
 	h.Audio.Xruns = xruns
+	h.Audio.Playing = a.audioStreaming()
 	switch {
 	case audioErr != nil && activeIn+activeOut > 0:
 		// Bluetooth transports may continue to flow while the local PipeWire
