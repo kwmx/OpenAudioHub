@@ -81,6 +81,10 @@ func TestUnidentifiableDevicesAreHidden(t *testing.T) {
 		"AA:BB:CC:DD:EE:12": {Addr: "AA:BB:CC:DD:EE:12", AddressType: "public", Name: "Kitchen Plug", Alias: "Kitchen Plug"},
 		// Unnamed and classless but assigned: never hidden.
 		"AA:BB:CC:DD:EE:13": {Addr: "AA:BB:CC:DD:EE:13", AddressType: "public", Alias: "AA-BB-CC-DD-EE-13"},
+		// No name or class yet, but an icon saying what it is: shown.
+		"AA:BB:CC:DD:EE:16": {Addr: "AA:BB:CC:DD:EE:16", AddressType: "public", Alias: "AA-BB-CC-DD-EE-16", Icon: "audio-headphones"},
+		// An icon BlueZ uses for nothing audio-related identifies nothing.
+		"AA:BB:CC:DD:EE:17": {Addr: "AA:BB:CC:DD:EE:17", AddressType: "public", Alias: "AA-BB-CC-DD-EE-17", Icon: "unknown-gadget"},
 		// Unnamed and classless but paired: never hidden.
 		"AA:BB:CC:DD:EE:14": {Addr: "AA:BB:CC:DD:EE:14", AddressType: "public", Alias: "AA-BB-CC-DD-EE-14", Paired: true},
 	}
@@ -93,13 +97,16 @@ func TestUnidentifiableDevicesAreHidden(t *testing.T) {
 	for _, d := range devs {
 		got[d.Addr] = d.Name
 	}
-	if _, ok := got["AA:BB:CC:DD:EE:10"]; ok {
-		t.Fatal("an unnamed, classless, unpaired device cannot be audio and should be hidden")
+	for _, addr := range []string{"AA:BB:CC:DD:EE:10", "AA:BB:CC:DD:EE:17"} {
+		if _, ok := got[addr]; ok {
+			t.Fatalf("%s: an unnamed device with no class or recognised icon should be hidden", addr)
+		}
 	}
 	for addr, want := range map[string]string{
 		"AA:BB:CC:DD:EE:11": "Headphones · EE:11",
 		"AA:BB:CC:DD:EE:12": "Kitchen Plug",
 		"AA:BB:CC:DD:EE:15": "Remembered Speaker",
+		"AA:BB:CC:DD:EE:16": "Headphones · EE:16",
 	} {
 		if got[addr] != want {
 			t.Errorf("%s: got %q, want %q", addr, got[addr], want)
