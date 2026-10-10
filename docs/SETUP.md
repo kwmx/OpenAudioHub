@@ -1,4 +1,4 @@
-# Setup and upgrade: OpenAudioHub 1.0.3
+# Setup and upgrade: OpenAudioHub 1.0.4
 
 This is not a hardware-qualified appliance image.
 Read `VALIDATION.md` and complete the acceptance checks below before relying on
@@ -9,9 +9,9 @@ it. Keep any existing working setup until the cold-boot and playback checks pass
 Use a **new folder** rather than mixing files from previous versions:
 
 ```bash
-mkdir -p ~/openaudiohub-upgrades/1.0.3
-unzip OpenAudioHub-1.0.3.zip -d ~/openaudiohub-upgrades/1.0.3
-cd ~/openaudiohub-upgrades/1.0.3/OpenAudioHub
+mkdir -p ~/openaudiohub-upgrades/1.0.4
+unzip OpenAudioHub-1.0.4.zip -d ~/openaudiohub-upgrades/1.0.4
+cd ~/openaudiohub-upgrades/1.0.4/OpenAudioHub
 ```
 
 The ZIP contains the full source, scripts, frontend, test report, and ARM64/AMD64
@@ -77,7 +77,7 @@ systemctl --user status openaudiohub-bluealsa-aplay.service --no-pager
 sudo stat -c '%a %U:%G %n' /etc/openaudiohub/{config,audio}.json
 ```
 
-Expected daemon version: `1.0.3`. The legacy **user** `bluealsa-aplay` service
+Expected daemon version: `1.0.4`. The legacy **user** `bluealsa-aplay` service
 should be absent/inactive. The managed player may wait for an assigned receiver.
 `config.json` must stay `600 root:root`; `audio.json` is the non-secret `644`
 projection used by the unprivileged bridge. Do not chmod the private file to 644.
@@ -133,6 +133,16 @@ Pair from Windows, not from the hub:
 If Windows says it cannot connect after you removed the hub on one side, turn
 on pairing mode, remove the hub in Windows, and add it again. Re-pairing a known
 device is accepted only while pairing mode is on.
+
+### A headset or speaker asks to pair again after every disconnect
+
+Releases before 1.0.4 paired devices from the Devices page while the adapter
+was not pairable, which makes the kernel skip storing the link key: BlueZ shows
+the device as paired until it disconnects, then forgets it. 1.0.4 holds the
+adapter pairable for the duration of each pairing and only reports success once
+the key is on disk. A device affected by the old behaviour says so on its card
+("Paired for this session only"), and the doctor flags it if it is assigned.
+Press **Forget** on that device, then **Pair** it again.
 
 The installer sets these in `/etc/bluetooth/main.conf`. They apply after the
 next reboot or `sudo systemctl restart bluetooth`, which drops every audio link:

@@ -240,6 +240,10 @@ func (a *App) decorateDevices(devices []Device, transports []Transport) []Device
 			devices[i].Reason = "Connected without a stored pairing, so it cannot be assigned yet. Press Pair to finish, then choose a role."
 		} else if devices[i].Role == "" && devices[i].Paired && a.recentlyPoliced(addr, time.Now()) {
 			devices[i].Reason = "The hub disconnected this source because it has no input. Choose an input for it, then connect again."
+		} else if devices[i].Role == "" && !devices[i].Paired {
+			if r := lostBondReason(addr, false); r != "" {
+				devices[i].Reason = r
+			}
 		}
 		if devices[i].Connected {
 			devices[i].Status = "connected"
@@ -689,6 +693,13 @@ func (a *App) btAction(addr, action string) error {
 			_, _ = a.run.Run(8*time.Second, "bluetoothctl", "disconnect", addr)
 			time.Sleep(1200 * time.Millisecond)
 		}
+		// The controller has to be bondable for this attempt, otherwise the kernel
+		// downgrades it to a non-bonding pairing that stores no key; see makeBondable.
+		restoreBondable, err := a.makeBondable()
+		if err != nil {
+			return err
+		}
+		defer restoreBondable()
 		// Pairing a headset routinely takes longer than a controller round trip: the
 		// peer may first have to establish a link, and some devices wait for the user
 		// to confirm. A short deadline killed bluetoothctl mid-pairing, which left the
@@ -698,8 +709,11 @@ func (a *App) btAction(addr, action string) error {
 		}
 		// Do not trust the exit status alone. A raced or interrupted attempt can exit
 		// without storing a bond, and trusting an unbonded device is what produced the
-		// "Paired: no / Trusted: yes" state that kept the UI asking to pair.
-		if d := a.bluetoothInfo(addr, ""); !d.Paired {
+		// "Paired: no / Trusted: yes" state that kept the UI asking to pair. BlueZ also
+		// answers Paired: yes for a pairing that stored no key, so require key material
+		// in the device store as well: without it the first disconnect drops the device
+		// and the same card asks to pair again.
+		if d := a.bluetoothInfo(addr, ""); !d.Paired || !a.pairStoredKey(addr) {
 			return userErrorf("the device did not complete pairing — put it in pairing mode and try again")
 		}
 		// Audio reconnects should not block on authorization prompts after pairing.

@@ -513,7 +513,7 @@ func (a *App) checkAssignedDevices() finding {
 	if err != nil {
 		return finding{status: doctorSkipped, detail: "Bluetooth is not answering."}
 	}
-	var missing, untrustedNames []string
+	var missing, sessionOnly, untrustedNames []string
 	var untrusted []string
 	for _, s := range slots {
 		bd, ok := snap[s.addr]
@@ -524,6 +524,8 @@ func (a *App) checkAssignedDevices() finding {
 		switch {
 		case !ok || !(bd.Paired || bd.Bonded):
 			missing = append(missing, fmt.Sprintf("%s (%s)", s.label, name))
+		case sessionOnlyReason(bd) != "":
+			sessionOnly = append(sessionOnly, fmt.Sprintf("%s (%s)", s.label, name))
 		case !bd.Trusted:
 			untrusted = append(untrusted, s.addr)
 			untrustedNames = append(untrustedNames, name)
@@ -533,6 +535,9 @@ func (a *App) checkAssignedDevices() finding {
 	if len(missing) > 0 {
 		parts = append(parts, strings.Join(missing, ", ")+" is no longer paired. Pair it again, or unassign it.")
 	}
+	if len(sessionOnly) > 0 {
+		parts = append(parts, strings.Join(sessionOnly, ", ")+" is paired for this session only: no key was stored, so it is forgotten at the next disconnect. Forget it on the Devices page, then pair it again.")
+	}
 	if len(untrusted) > 0 {
 		parts = append(parts, strings.Join(untrustedNames, ", ")+" is not trusted, so its reconnects depend on the pairing helper.")
 	}
@@ -540,7 +545,7 @@ func (a *App) checkAssignedDevices() finding {
 		return finding{status: doctorOK, detail: fmt.Sprintf("%d assigned, all paired and trusted.", len(slots))}
 	}
 	f := finding{status: doctorWarning, detail: strings.Join(parts, " ")}
-	if len(missing) > 0 {
+	if len(missing) > 0 || len(sessionOnly) > 0 {
 		f.status = doctorProblem
 	}
 	if len(untrusted) > 0 {
