@@ -149,3 +149,37 @@ func sessionOnlyReason(bd bluezDevice) string {
 	}
 	return ""
 }
+
+// bluezErrorHint turns the BlueZ failures users actually hit into something to
+// do about them. It returns "" for anything unrecognised, which keeps the
+// generic message with a log reference.
+func bluezErrorHint(action string, err error) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	has := func(subs ...string) bool {
+		for _, sub := range subs {
+			if strings.Contains(s, sub) {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case has("InProgress", "br-connection-busy"):
+		return "Bluetooth is still busy with another connection attempt. Wait a few seconds and try again."
+	case action == "pair" && has("AuthenticationFailed", "AuthenticationRejected", "AuthenticationCanceled", "AuthenticationTimeout"):
+		return "The device refused the pairing. Remove the hub from the device's own Bluetooth list, put the device in pairing mode, and try again."
+	case action == "pair" && has("AlreadyExists"):
+		return "This device is already paired. Press Forget first if you want to pair it again."
+	case has("status 0x04", "ConnectionAttemptFailed", "Page Timeout", "Host is down", "br-connection-page-timeout", "timed out"):
+		if action == "pair" {
+			return "The device did not answer. Make sure it is on, nearby and in pairing mode. To add a Windows PC or a phone, turn on Pairing mode here and add the hub from the PC's or phone's Bluetooth settings instead."
+		}
+		return "The device did not answer. Make sure it is switched on and nearby, then try again."
+	case has("br-connection-profile-unavailable", "profile-unavailable"):
+		return "The device does not offer the audio profile this role needs. Check that it is assigned to the right role."
+	}
+	return ""
+}

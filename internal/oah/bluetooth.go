@@ -693,6 +693,7 @@ func (a *App) btAction(addr, action string) error {
 				return err
 			}
 		}
+		a.forgetLocally(addr)
 		a.logf("Bluetooth device forgotten: %s", addr)
 		a.signalRefresh()
 		return nil
@@ -731,6 +732,10 @@ func (a *App) btAction(addr, action string) error {
 		// to confirm. A short deadline killed bluetoothctl mid-pairing, which left the
 		// device trusted but unbonded and made the UI ask to pair again.
 		if _, err := a.run.Run(pairTimeout, "bluetoothctl", "pair", addr); err != nil {
+			if connectStillPending(err) {
+				// As with Connect: a killed bluetoothctl leaves BlueZ pairing.
+				_, _ = a.run.Run(5*time.Second, "bluetoothctl", "cancel-pairing", addr)
+			}
 			return err
 		}
 		// Do not trust the exit status alone. A raced or interrupted attempt can exit
@@ -791,7 +796,11 @@ func (a *App) btAction(addr, action string) error {
 			}
 			args = append(args, "a2dp-sink")
 		}
-		_, err := a.run.Run(connectTimeout, "bluetoothctl", args...)
+		profile := ""
+		if len(args) > 2 {
+			profile = args[2]
+		}
+		err := a.connectProfile(connectTimeout, addr, profile)
 		if err == nil && strings.HasPrefix(role, "out") {
 			a.setDefaultOutput(addr)
 		}
@@ -850,6 +859,35 @@ func (a *App) setPairing(enable bool) error {
 		}(until)
 	}
 	return nil
+}
+
+// forgetLocally drops what the hub itself remembers about a forgotten device:
+// its saved name, cached details, reconnect backoff, and BlueZ's name cache
+// entry. "bluetoothctl remove" deletes the bond, but these kept the device
+// listed under its old name, which looked like the forget had not worked.
+func (a *App) forgetLocally(addr string) {
+	a.deviceNamesMu.Lock()
+	_, had := a.deviceNames[addr]
+	delete(a.deviceNames, addr)
+	names := make(map[string]string, len(a.deviceNames))
+	for k, v := range a.deviceNames {
+		names[k] = v
+	}
+	path := a.deviceNamesPath
+	a.deviceNamesMu.Unlock()
+	if had {
+		_ = writeDeviceNameFile(path, names)
+	}
+	a.deviceInfoMu.Lock()
+	delete(a.deviceInfo, addr)
+	a.deviceInfoMu.Unlock()
+	a.forgetConnectState(addr)
+	a.clearPoliced(addr)
+	if caches, _ := filepath.Glob(filepath.Join(bluezStorageRoot, "*", "cache", addr)); len(caches) > 0 {
+		for _, c := range caches {
+			_ = os.Remove(c)
+		}
+	}
 }
 
 // pairingActive reports whether pairing mode is currently on.

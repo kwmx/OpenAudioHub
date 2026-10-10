@@ -31,6 +31,13 @@ AGENT_PATH = '/org/openaudiohub/agent'
 PAIRING_FLAG = '/run/openaudiohub/pairing-enabled'
 BLUEZ = 'org.bluez'
 
+def log(msg):
+    # stdout goes to the journal; openaudiohubd includes it in Diagnostics.
+    print(msg, flush=True)
+
+def addr_of(path):
+    return str(path).rsplit('/dev_', 1)[-1].replace('_', ':')
+
 class Rejected(dbus.DBusException):
     _dbus_error_name = 'org.bluez.Error.Rejected'
 
@@ -56,6 +63,7 @@ class Agent(dbus.service.Object):
     def allow_new(self, device):
         if self.pairing_enabled() or self.device_known(device):
             return
+        log('refused %s: unknown device and pairing mode is off' % addr_of(device))
         raise Rejected('OpenAudioHub pairing mode is disabled')
 
     def allow_pairing(self, device):
@@ -67,6 +75,7 @@ class Agent(dbus.service.Object):
         if trusted and not paired:
             # Trusted but never bonded: a pairing the hub itself started.
             return
+        log('refused pairing from %s: pairing mode is off' % addr_of(device))
         raise Rejected('OpenAudioHub pairing mode is disabled')
 
     @dbus.service.method('org.bluez.Agent1', in_signature='', out_signature='')
@@ -117,8 +126,9 @@ def trust_when_paired(bus):
             dev = dbus.Interface(bus.get_object(BLUEZ, path), 'org.freedesktop.DBus.Properties')
             if not bool(dev.Get('org.bluez.Device1', 'Trusted')):
                 dev.Set('org.bluez.Device1', 'Trusted', dbus.Boolean(True))
-        except Exception:
-            pass
+                log('paired %s; marked trusted' % addr_of(path))
+        except Exception as e:
+            log('could not trust %s: %s' % (addr_of(path), e))
     bus.add_signal_receiver(changed, dbus_interface='org.freedesktop.DBus.Properties',
                             signal_name='PropertiesChanged', bus_name=BLUEZ, path_keyword='path')
 
@@ -134,6 +144,7 @@ def main():
         if 'AlreadyExists' not in str(e):
             raise
     manager.RequestDefaultAgent(AGENT_PATH)
+    log('pairing agent registered')
     GLib.MainLoop().run()
 
 if __name__ == '__main__':

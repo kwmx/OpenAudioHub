@@ -192,11 +192,14 @@ func hiddenNearby(bd bluezDevice, assigned bool) bool {
 }
 
 // unidentifiable reports whether a listed device gives the user nothing to act
-// on: unpaired, unassigned, no name from any source and no Class of Device.
-// BR/EDR inquiry always reports a Class, so a device without one was only seen
-// over LE (smart plugs, trackers, TVs) and cannot be an A2DP input or output.
+// on: unpaired, unassigned, no name from any source, and neither a Class of
+// Device nor an Icon that says what it is. BR/EDR inquiry always reports a
+// Class, so such a device was only seen over LE (smart plugs, trackers) and
+// cannot be an A2DP input or output. An Icon alone is kept: a dual-mode headset
+// seen first over LE carries one (from its Appearance) before inquiry reports
+// its Class, and hiding it meanwhile kept it out of reach for pairing.
 func unidentifiable(d Device, bd bluezDevice, assigned bool) bool {
-	return !assigned && !d.Paired && !d.Connected && d.unnamed && bd.Class == 0 && len(d.Caps) == 0
+	return !assigned && !d.Paired && !d.Connected && d.unnamed && classLabel(bd.Class, bd.Icon) == "" && len(d.Caps) == 0
 }
 
 // readBluezNameCache reads a [General] Name/Alias from a BlueZ storage file.
