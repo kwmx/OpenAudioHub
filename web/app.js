@@ -218,13 +218,59 @@ function renderLock() {
   </form></div>`;
 }
 
+// Update progress. The installer restarts the daemon midway, so the page follows
+// the update by polling a status endpoint until the new version answers, then
+// reloads to pick up the new interface. Without this the page stayed silent
+// until the user refreshed it.
+function updatePollMs(){return window.__updatePollMs||3000}
+// How long a stopped update unit is tolerated before it counts as failed: the
+// unit can take a moment to appear after the update is requested.
+function updateGraceMs(){return window.__updateGraceMs??20000}
+function sameVersion(a,b){return String(a||'').replace(/^v/,'')===String(b||'').replace(/^v/,'')}
+function updateInProgress(){const u=model.updating;return !!u&&u.phase!=='done'&&u.phase!=='failed'}
+function startUpdateFollow(target){
+  // The journal filter uses the hub's clock (from its state), not the browser's.
+  const hubNow=Date.parse(model.state?.system?.time||'');
+  const since=Number.isFinite(hubNow)?Math.floor(hubNow/1000)-30:0;
+  model.updating={target:String(target||''),since,started:Date.now(),phase:'running',step:'Starting the update…',last:''};
+  setTimeout(followUpdate,updatePollMs());
+}
+async function followUpdate(){
+  const u=model.updating;if(!updateInProgress())return;
+  let st=null;
+  try{st=await api('/api/system/update/status'+(u.since?`?since=${u.since}`:''))}catch{st=null}
+  if(model.updating!==u)return;
+  const elapsed=Date.now()-u.started;
+  if(!st){u.phase='restarting'}
+  else{
+    if(st.step)u.step=String(st.step);
+    if(st.last)u.last=String(st.last);
+    if(sameVersion(st.current,u.target)){
+      u.phase='done';render(true);toast(`Updated to ${u.target}`);
+      setTimeout(()=>(window.__reloadPage||(()=>location.reload()))(),2500);return;
+    }
+    if(!st.running&&elapsed>updateGraceMs()){u.phase='failed';render(true);toast('The update did not complete.','error');return}
+    u.phase='running';
+  }
+  if(elapsed>20*60*1000){u.phase='failed';u.last=u.last||'No result after 20 minutes.';render(true);return}
+  render(true);
+  setTimeout(followUpdate,updatePollMs());
+}
+function updateBanner(){
+  const u=model.updating;if(!u)return '';
+  const cls={done:'apply-banner ok',failed:'apply-banner rolledback'}[u.phase]||'apply-banner';
+  const title={running:`Installing ${u.target}…`,restarting:`Installing ${u.target}: the hub is restarting…`,done:`Updated to ${u.target}`,failed:`The update to ${u.target} did not complete`}[u.phase];
+  const detail=u.phase==='done'?'Reloading the page…':u.phase==='failed'?`${u.last?u.last+' ':''}See Diagnostics for the full log.`:`${u.step} Audio stops briefly; this page updates by itself.`;
+  return `<div class="${cls} update-banner" data-key="update-banner"><div><b>${esc(title)}</b><span>${esc(detail)}</span></div>${u.phase==='failed'?btn('Dismiss','update-dismiss','secondary'):''}</div>`;
+}
+
 function renderShell() {
   const s = model.state;
   const page = ({Dashboard:dashboardPage,Devices:devicesPage,Network:networkPage,Audio:audioPage,System:systemPage,Diagnostics:diagnosticsPage})[model.route]();
   patchHTML(app, `<div class="app-shell">
     <header class="topbar">${logo()}<nav>${routes.map(r=>`<button data-route="${r}" class="${r===model.route?'active':''}">${r}</button>`).join('')}</nav>
       <div class="top-status">${dot(model.realtime==='connected'?'connected':'warning')}<span>${esc(s.system.hostname)}</span></div><button class="btn ghost icon-only" data-action="theme-toggle" title="Switch theme" aria-label="Switch theme">${themeIsLight()?SVG.moon:SVG.sun}</button>${iconBtn(SVG.logout,'Sign out','logout')}</header>
-    <main data-key="page-${model.route}">${page}</main>
+    <main data-key="page-${model.route}">${updateBanner()}${page}</main>
     <nav class="bottom-tabs">${routes.map(r=>`<button data-route="${r}" class="${r===model.route?'active':''}">${r}</button>`).join('')}</nav>
   </div>`, `shell-${model.route}`);
   alignConnectors();
@@ -435,7 +481,7 @@ async function applyDelay(ms){
 }
 
 function systemPage(){const s=model.state.system;return `<div class="page"><div class="page-title"><div><h1>System</h1><p>Identity and maintenance.</p></div></div><div class="settings-grid">${card(`<h2>Identity</h2><label><span class="label-row">Hostname${hint('Names the hub on the network. Reachable at <hostname>.local and used for the web address.')}</span><input id="system-hostname" value="${attr(s.hostname)}"></label><label><span class="label-row">Bluetooth name${hint('What phones and computers see when they scan for this hub.')}</span><input id="system-btname" value="${attr(s.btName)}"></label>${btn('Save identity','identity-save','primary')}`)}
-  ${(()=>{const u=model.update||{};const busy=!!u.running;return card(`<h2>About</h2><dl><dt>OpenAudioHub</dt><dd>${esc(s.version)}</dd><dt>Operating system</dt><dd>${esc(s.os)}</dd><dt>Uptime</dt><dd>${esc(s.uptime)}</dd><dt>Current time</dt><dd>${esc(new Date(s.time).toLocaleString())}</dd></dl>
+  ${(()=>{const u=model.update||{};const busy=!!u.running||updateInProgress();return card(`<h2>About</h2><dl><dt>OpenAudioHub</dt><dd>${esc(s.version)}</dd><dt>Operating system</dt><dd>${esc(s.os)}</dd><dt>Uptime</dt><dd>${esc(s.uptime)}</dd><dt>Current time</dt><dd>${esc(new Date(s.time).toLocaleString())}</dd></dl>
     <div class="update-row">${u.checked?(u.available?`<span class="pill">${dot('warning')}${esc(u.latest)} available</span>`:`<span class="pill">${dot('connected')}Up to date</span>`):''}</div>
     ${u.detail?`<p class="settings-note">${esc(u.detail)}</p>`:''}
     ${u.checksError?`<p class="settings-note">${esc(u.checksError)}</p>`:''}
@@ -589,7 +635,8 @@ app.addEventListener('click',async e=>{
     if(action==='theme-toggle'){cycleTheme();render();return;}
     if(action==='restore-backup'){document.querySelector('#restore-file').click();return;}
     if(action==='update-check'){try{model.update=await api('/api/system/update');render();}catch(x){toast(x.message,'error');}return;}
-    if(action==='update-apply'){const u=model.update||{};if(!confirm(`Update to ${u.latest}? The hub reinstalls itself and audio is interrupted; this takes a few minutes.`))return;try{await post('/api/system/update',{});model.update={...(model.update||{}),running:true};toast('Update started. Watch Diagnostics for progress.');render();}catch(x){toast(x.message,'error');}return;}
+    if(action==='update-apply'){const u=model.update||{};if(!confirm(`Update to ${u.latest}? The hub reinstalls itself and audio is interrupted; this takes a few minutes.`))return;try{await post('/api/system/update',{});model.update={...(model.update||{}),running:true};startUpdateFollow(u.latest);render();}catch(x){toast(x.message,'error');}return;}
+    if(action==='update-dismiss'){model.updating=null;render();return;}
     if(action==='mixer-retry'){await commitMixer();return;}
     if(action==='logout'){model.localMixer=null;model.localAudio=null;model.minRevision=0;await api('/api/session',{method:'DELETE'});model.locked=true;model.state=null;model.route='Dashboard';closeEvents();render();return}
     if(action==='ui-retry'){model.stateError='';await loadPublic();return}if(action==='ui-dashboard'){model.route='Dashboard';render();return}if(action==='go-devices'){model.route='Devices';render();return}if(action==='go-network'){model.route='Network';render();return}if(action==='go-audio'){model.route='Audio';render();return}

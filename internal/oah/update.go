@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -177,6 +178,62 @@ func (a *App) updateRunningLocked() bool {
 	}
 	updateRun = false
 	return false
+}
+
+// UpdateProgress is a cheap view of an update in progress. The web UI polls it
+// after starting an update; it never contacts GitHub.
+type UpdateProgress struct {
+	Current string `json:"current"`
+	Running bool   `json:"running"`
+	Target  string `json:"target,omitempty"`
+	// Step is the installer's latest "[n/9] ..." line; Last is the latest line of
+	// any kind, which on failure is the error.
+	Step string `json:"step,omitempty"`
+	Last string `json:"last,omitempty"`
+}
+
+var installerStepRE = regexp.MustCompile(`^\[\d+/\d+\] `)
+
+// updateProgressLines picks the latest installer step and the latest line from
+// the update unit's journal output.
+func updateProgressLines(out string) (step, last string) {
+	for _, l := range strings.Split(out, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "-- ") {
+			continue // blank lines and journalctl's "-- No entries --" notes
+		}
+		if len(l) > 200 {
+			l = l[:200] + "…"
+		}
+		last = l
+		if installerStepRE.MatchString(l) || strings.HasPrefix(l, "Downloading ") || strings.HasPrefix(l, "Installing OpenAudioHub") || strings.HasPrefix(l, "Running the installer") || strings.HasPrefix(l, "Done.") {
+			step = l
+		}
+	}
+	return step, last
+}
+
+// handleUpdateProgress reports whether the update unit is running, its latest
+// progress, and the version this daemon runs. The installer restarts the daemon
+// midway, so "running" comes from systemd rather than in-memory state, and
+// since (Unix seconds, hub clock) limits the journal to the current attempt.
+func (a *App) handleUpdateProgress(w http.ResponseWriter, r *http.Request) {
+	st := a.unitState(updateUnit + ".service")
+	p := UpdateProgress{Current: a.version, Running: st == "active" || st == "activating" || st == "reloading"}
+	updateMu.Lock()
+	p.Target = updateState.Latest
+	if a.updateRunningLocked() {
+		p.Running = true
+	}
+	updateMu.Unlock()
+	args := []string{"-u", updateUnit + ".service", "-n", "40", "-o", "cat", "--no-pager"}
+	if since, err := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64); err == nil && since > 0 {
+		args = append(args, "--since", "@"+strconv.FormatInt(since, 10))
+	}
+	if out, err := a.run.Run(3*time.Second, "journalctl", args...); err == nil {
+		p.Step, p.Last = updateProgressLines(out)
+	}
+	writeJSON(w, 200, p)
 }
 
 // handleUpdateCheck performs the GitHub lookup on demand rather than on every

@@ -44,6 +44,7 @@ func (a *App) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/system/restore", a.requireAuth(a.handleRestore))
 	mux.HandleFunc("GET /api/system/update", a.requireAuth(a.handleUpdateCheck))
 	mux.HandleFunc("POST /api/system/update", a.requireAuth(a.handleUpdateApply))
+	mux.HandleFunc("GET /api/system/update/status", a.requireAuth(a.handleUpdateProgress))
 	mux.HandleFunc("GET /api/diagnostics", a.requireAuth(a.handleDiagnostics))
 	mux.HandleFunc("GET /api/doctor", a.requireAuth(a.handleDoctor))
 	mux.HandleFunc("POST /api/doctor/fix", a.requireAuth(a.handleDoctorFix))
