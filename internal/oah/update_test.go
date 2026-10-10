@@ -1,8 +1,10 @@
 package oah
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -62,5 +64,51 @@ func TestUpdateApplyRefusesWithoutAKnownRelease(t *testing.T) {
 	updateMu.Unlock()
 	if running {
 		t.Fatal("a refused update must not be marked as running")
+	}
+}
+
+func TestUpdateProgressLines(t *testing.T) {
+	out := "Installing OpenAudioHub v1.0.7 (currently 1.0.6)\nDownloading https://github.com/x/archive/refs/tags/v1.0.7.tar.gz\n" +
+		"Running the installer from the release archive\n[1/9] Installing runtime packages...\nGet:1 http://deb.debian.org trixie InRelease\n" +
+		"[2/9] Installing files...\n\n"
+	step, last := updateProgressLines(out)
+	if step != "[2/9] Installing files..." || last != "[2/9] Installing files..." {
+		t.Fatalf("step %q last %q", step, last)
+	}
+	step, last = updateProgressLines("Downloading https://example\nDownload failed. Check the network and the tag name.\n")
+	if step != "Downloading https://example" || last != "Download failed. Check the network and the tag name." {
+		t.Fatalf("failure: step %q last %q", step, last)
+	}
+	if step, last = updateProgressLines("-- No entries --\n"); step != "" || last != "" {
+		t.Fatalf("journalctl notes are not progress: %q %q", step, last)
+	}
+}
+
+func TestUpdateProgressEndpoint(t *testing.T) {
+	rec := &recordedRunner{reply: func(call string) (string, error) {
+		switch {
+		case call == "systemctl is-active openaudiohub-update.service":
+			return "active\n", nil
+		case strings.HasPrefix(call, "journalctl -u openaudiohub-update.service"):
+			return "[7/9] Applying audio configuration...\n", nil
+		}
+		return "", nil
+	}}
+	a := &App{run: runner{fake: rec.run}, version: "1.0.6"}
+	updateMu.Lock()
+	updateState = UpdateStatus{Latest: "v1.0.7"}
+	updateRun = false
+	updateMu.Unlock()
+	w := httptest.NewRecorder()
+	a.handleUpdateProgress(w, httptest.NewRequest("GET", "/api/system/update/status?since=1760000000", nil))
+	var p UpdateProgress
+	if err := json.NewDecoder(w.Body).Decode(&p); err != nil {
+		t.Fatal(err)
+	}
+	if !p.Running || p.Current != "1.0.6" || p.Target != "v1.0.7" || p.Step != "[7/9] Applying audio configuration..." {
+		t.Fatalf("progress %+v", p)
+	}
+	if !rec.has("journalctl -u openaudiohub-update.service -n 40 -o cat --no-pager --since @1760000000") {
+		t.Fatalf("journal must be limited to this attempt, calls: %v", rec.calls)
 	}
 }

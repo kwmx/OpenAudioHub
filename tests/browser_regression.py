@@ -58,6 +58,47 @@ class BrowserRegression(unittest.TestCase):
   if mut:mut(s)
   self.page.evaluate('s=>window.__emit(s)',s)
  def route(self,name):self.page.locator(f'.topbar [data-route="{name}"]').click()
+ def update_mocks(self,statuses,grace=None):
+  # statuses: list of status replies; None means the hub is restarting (fetch fails).
+  self.page.evaluate('''statuses=>{
+   window.__updatePollMs=50;window.__reloaded=0;window.__reloadPage=()=>{window.__reloaded++};
+   window.__statusCalls=[];const inner=window.fetch;let i=0;
+   const json=v=>new Response(JSON.stringify(v),{status:200,headers:{'Content-Type':'application/json'}});
+   window.fetch=async(path,opts={})=>{
+    if(path==='/api/system/update'&&(!opts.method||opts.method==='GET'))return json({current:'1.0.6',latest:'v1.0.7',available:true,checked:true});
+    if(path==='/api/system/update'&&opts.method==='POST')return json({ok:true,installing:'v1.0.7'});
+    if(path.startsWith('/api/system/update/status')){window.__statusCalls.push(path);const v=statuses[Math.min(i++,statuses.length-1)];if(v===null)throw new TypeError('Failed to fetch');return json(v);}
+    return inner(path,opts);
+   };
+  }''',statuses)
+  if grace is not None:self.page.evaluate('g=>{window.__updateGraceMs=g}',grace)
+  self.page.on('dialog',lambda d:d.accept())
+  self.route('System')
+  self.page.locator('[data-action="update-check"]').click()
+  self.page.locator('[data-action="update-apply"]').click()
+ def test_update_progress_is_shown_until_the_new_version_answers(self):
+  self.update_mocks([
+   {'current':'1.0.6','running':True,'target':'v1.0.7','step':'[3/9] Initializing OpenAudioHub configuration...'},
+   None,None,
+   {'current':'1.0.7','running':True,'target':'','step':'[8/9] Enabling OpenAudioHub...'}])
+  banner=self.page.locator('.update-banner')
+  banner.wait_for()
+  self.assertIn('Installing v1.0.7',banner.inner_text())
+  self.page.wait_for_function("()=>document.querySelector('.update-banner')?.textContent.includes('Updated to v1.0.7')",timeout=5000)
+  self.page.wait_for_function("()=>window.__reloaded===1",timeout=5000)
+  calls=self.page.evaluate('window.__statusCalls')
+  self.assertTrue(all('since=' in c for c in calls),calls)
+  self.route('Dashboard');self.assertEqual(self.page.locator('.update-banner').count(),1)
+ def test_failed_update_is_reported(self):
+  self.update_mocks([
+   {'current':'1.0.6','running':True,'target':'v1.0.7','step':'Downloading https://github.com/...'},
+   {'current':'1.0.6','running':False,'target':'v1.0.7','step':'Downloading https://github.com/...','last':'Download failed. Check the network and the tag name.'}],grace=0)
+  self.page.wait_for_function("()=>document.querySelector('.update-banner')?.textContent.includes('did not complete')",timeout=8000)
+  text=self.page.locator('.update-banner').inner_text()
+  self.assertIn('Download failed',text)
+  self.assertEqual(self.page.evaluate('window.__reloaded'),0)
+  self.page.locator('[data-action="update-dismiss"]').click()
+  self.assertEqual(self.page.locator('.update-banner').count(),0)
  def test_doctor_lists_issues_and_applies_a_fix(self):
   self.page.evaluate('''()=>{
    const check=(id,title,status,detail,fixLabel='')=>({id,area:'bluetooth',title,status,detail,fixLabel});
