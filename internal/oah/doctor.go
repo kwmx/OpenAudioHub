@@ -753,7 +753,9 @@ func (a *App) checkAudioRealtime() finding {
 				return "", err
 			}
 			// PipeWire asks for realtime priority once, when it starts.
-			if _, err := a.run.Run(28*time.Second, "systemctl", "restart", "openaudiohub-audio-tuning.service"); err != nil {
+			_, err := a.run.Run(28*time.Second, "systemctl", "restart", "openaudiohub-audio-tuning.service")
+			a.resetMixerCache()
+			if err != nil {
 				return "", err
 			}
 			a.requestReconcile("doctor: audio restarted for realtime priority")

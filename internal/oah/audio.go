@@ -81,7 +81,9 @@ func (a *App) applyAudioConfig(cfg AudioConfig) error {
 	// Never start an idle player merely because settings were saved. Receiver
 	// capabilities take effect only after the BlueALSA peer reconnects.
 	if graphChanged {
-		if _, err := a.run.Run(28*time.Second, "systemctl", "restart", "openaudiohub-audio-tuning.service"); err != nil {
+		_, err := a.run.Run(28*time.Second, "systemctl", "restart", "openaudiohub-audio-tuning.service")
+		a.resetMixerCache()
+		if err != nil {
 			return fmtErr("settings saved, but the audio graph could not be restarted; inspect Diagnostics")
 		}
 	}
@@ -614,6 +616,15 @@ func (a *App) setDefaultOutput(addr string) {
 	}
 }
 
+// resetMixerCache makes the next applyMixer send every stream its settings.
+// Sink-input ids are only unique within one pipewire-pulse run, so whatever
+// may have recreated the streams (a graph restart, a new stream) clears it.
+func (a *App) resetMixerCache() {
+	a.mixerApplyMu.Lock()
+	a.mixerApplied = nil
+	a.mixerApplyMu.Unlock()
+}
+
 func (a *App) applyMixer() {
 	a.mixerApplyMu.Lock()
 	defer a.mixerApplyMu.Unlock()
@@ -782,11 +793,9 @@ func (a *App) audioReady() error {
 	// streaming, which previously produced false "Audio graph unavailable" UI.
 	out, err := a.audioUserCommand(3*time.Second, "systemctl", "--user", "is-active", "pipewire.service", "wireplumber.service")
 	if err == nil && strings.Count(strings.TrimSpace(out), "active") >= 2 {
-		a.audioOKAt.Store(time.Now().UnixNano())
 		return nil
 	}
 	if _, wpErr := a.audioUserCommand(3*time.Second, "wpctl", "status", "-n"); wpErr == nil {
-		a.audioOKAt.Store(time.Now().UnixNano())
 		return nil
 	}
 	go func() { _ = a.ensureAudioSession() }()
@@ -805,6 +814,7 @@ func (a *App) ensureAudioSession() error {
 		return err
 	}
 	a.audioLastHeal = time.Now()
+	a.resetMixerCache()
 	c := a.cfg.Get()
 	_, _ = a.run.Run(5*time.Second, "systemctl", "start", fmt.Sprintf("user@%d.service", c.AudioUID))
 	_, _ = a.audioUserCommand(8*time.Second, "systemctl", "--user", "start",
@@ -850,9 +860,15 @@ func (a *App) mixerEventSupervisor() {
 			time.Sleep(2 * time.Second)
 			continue
 		}
+		// A (re)started subscription usually means pipewire-pulse restarted, and
+		// a restarted server hands out sink-input ids from the start again.
+		a.resetMixerCache()
 		sc := bufio.NewScanner(stdout)
 		for sc.Scan() {
 			if strings.Contains(sc.Text(), "Event 'new' on sink-input") {
+				// The new stream starts at the server's default volume, and its id
+				// may be one an old stream had.
+				a.resetMixerCache()
 				time.Sleep(80 * time.Millisecond)
 				a.applyMixer()
 				a.signalRefresh()
@@ -867,11 +883,6 @@ func (a *App) audioSupervisor() {
 	t := time.NewTicker(20 * time.Second)
 	defer t.Stop()
 	for range t.C {
-		// The state build checks the graph every 10 s; probing again here would
-		// only double the processes started while audio plays.
-		if ok := a.audioOKAt.Load(); ok != 0 && time.Since(time.Unix(0, ok)) < 25*time.Second {
-			continue
-		}
 		if _, err := a.audioUserCommand(2*time.Second, "wpctl", "status", "-n"); err != nil {
 			a.logf("audio supervisor: PipeWire unavailable, attempting recovery: %v", err)
 			_ = a.ensureAudioSession()
@@ -933,6 +944,7 @@ func (a *App) applyIdentity(hostname, btName string) error {
 
 func (a *App) restartAudio() {
 	_, _ = a.run.Run(10*time.Second, "systemctl", "restart", "openaudiohub-audio-tuning.service")
+	a.resetMixerCache()
 	a.requestReconcile("manual audio restart")
 }
 func (a *App) systemAction(action string) error {

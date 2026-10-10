@@ -202,7 +202,13 @@ func TestDescribeA2DPConfig(t *testing.T) {
 		rate  int
 	}{
 		{0x00, []byte{0x11, 0x15, 2, 35}, "SBC", 48000},
+		// A2DP spec table 4.15 (BlueZ AAC_SAMPLING_FREQ_*): octet 1 bit 7 is
+		// 8 kHz and bit 0 is 44.1 kHz; octet 2 bits 7..4 are 48, 64, 88.2 and
+		// 96 kHz.
 		{0x02, []byte{0x80, 0x01, 0x0c, 0, 0, 0}, "AAC", 44100},
+		{0x02, []byte{0x80, 0x80, 0x0c, 0, 0, 0}, "AAC", 8000},
+		{0x02, []byte{0x80, 0x00, 0x8c, 0, 0, 0}, "AAC", 48000},
+		{0x02, []byte{0x80, 0x00, 0x1c, 0, 0, 0}, "AAC", 96000},
 		{0xff, []byte{0x4f, 0, 0, 0, 0x01, 0, 0x22}, "aptX", 0},
 		{0xff, []byte{0x2d, 0x01, 0, 0, 0xaa, 0, 0x34, 0x07}, "LDAC", 0},
 		{0x04, nil, "0x04", 0},

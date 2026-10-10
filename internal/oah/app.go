@@ -88,8 +88,6 @@ type App struct {
 
 	audioHealMu   sync.Mutex
 	audioLastHeal time.Time
-	// audioOKAt is when audioReady last found the graph healthy (UnixNano).
-	audioOKAt atomic.Int64
 
 	sseMu        sync.Mutex
 	sse          map[chan []byte]struct{}

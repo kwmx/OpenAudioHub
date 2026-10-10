@@ -38,6 +38,14 @@ func TestApplyMixerSendsOnlyChanges(t *testing.T) {
 		t.Fatal("a changed mute must be sent")
 	}
 
+	// A restarted pipewire-pulse hands out ids from the start again, so the same
+	// id can belong to a new stream at the default volume.
+	a.restartAudio()
+	a.applyMixer()
+	if n := rec.countContaining("set-sink-input-volume " + streamID); n != 3 {
+		t.Fatalf("after an audio restart the stream must be set again, got %d volume calls", n)
+	}
+
 	streamID = "57" // the source reconnected
 	a.applyMixer()
 	if rec.countContaining("set-sink-input-volume 57") != 1 {
