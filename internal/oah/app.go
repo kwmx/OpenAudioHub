@@ -42,9 +42,9 @@ type App struct {
 
 	audioConfigMu sync.Mutex
 	mixerApplyMu  sync.Mutex
-	// mixerApplied is the volume and mute last sent to each sink-input id;
-	// guarded by mixerApplyMu.
-	mixerApplied    map[string]string
+	// mixerKick wakes the worker that re-applies the mixer; see kickMixer.
+	mixerKick       chan struct{}
+	mixerKickOnce   sync.Once
 	reconcileMu     sync.Mutex
 	btOpsMu         sync.Mutex
 	deviceNamesMu   sync.Mutex

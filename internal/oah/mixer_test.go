@@ -1,55 +1,100 @@
 package oah
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
-// Reconcile applies the mixer on every pass. Only a change, or a stream that
-// reappeared under a new id, may cost pactl calls.
-func TestApplyMixerSendsOnlyChanges(t *testing.T) {
-	const in1 = "AA:BB:CC:DD:EE:01"
-	streamID := "41"
-	rec := &recordedRunner{reply: func(call string) (string, error) {
-		if strings.HasSuffix(call, "pactl list sink-inputs") {
-			return "Sink Input #" + streamID + "\n\tapi.bluez5.address = \"" + in1 + "\"\n\tnode.name = \"bluez_input.AA_BB_CC_DD_EE_01.2\"\n", nil
+// fakePulse is a sink-input whose volume and mute change when pactl sets them,
+// like pipewire-pulse.
+type fakePulse struct {
+	mu          sync.Mutex
+	id, addr    string
+	left, right int
+	mute        bool
+}
+
+func (p *fakePulse) reply(call string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	fs := strings.Fields(call)
+	switch {
+	case strings.HasSuffix(call, "pactl list sink-inputs"):
+		m := "no"
+		if p.mute {
+			m = "yes"
 		}
-		return "", nil
-	}}
+		node := "bluez_input." + strings.ReplaceAll(p.addr, ":", "_") + ".2"
+		return fmt.Sprintf("Sink Input #%s\n\tMute: %s\n\tVolume: front-left: 0 / %d%% / 0.00 dB,   front-right: 0 / %d%% / 0.00 dB\n\t        balance 0.00\n\tProperties:\n\t\tnode.name = \"%s\"\n",
+			p.id, m, p.left, p.right, node), nil
+	case strings.Contains(call, "set-sink-input-volume "+p.id+" "):
+		fmt.Sscanf(fs[len(fs)-2], "%d%%", &p.left)
+		fmt.Sscanf(fs[len(fs)-1], "%d%%", &p.right)
+	case strings.Contains(call, "set-sink-input-mute "+p.id+" "):
+		p.mute = fs[len(fs)-1] == "1"
+	}
+	return "", nil
+}
+
+// Reconcile applies the mixer on every pass. pactl is only asked to change a
+// stream whose volume or mute differs from the mixer settings, and a stream
+// PipeWire reset is always put back.
+func TestApplyMixerSendsOnlyWhatDiffers(t *testing.T) {
+	const in1 = "AA:BB:CC:DD:EE:01"
+	pw := &fakePulse{id: "41", addr: in1, left: 100, right: 100}
+	rec := &recordedRunner{reply: pw.reply}
 	a := reconcileApp(t, rec, "AA:BB:CC:DD:EE:09", in1)
-	sets := func() int { return rec.count("runuser") - rec.countContaining("list sink-inputs") }
-
-	a.applyMixer()
-	if n := rec.countContaining("set-sink-input-volume " + streamID); n != 1 {
-		t.Fatalf("first apply must set the stream volume once, got %d", n)
-	}
-	before := sets()
-	a.applyMixer()
-	if sets() != before {
-		t.Fatalf("an unchanged mixer must not call pactl again: %v", rec.calls)
-	}
-
 	m := a.cfg.Get().Mixer
+	m.Placement[0] = "left"
+	if err := a.updateMixer(m); err != nil {
+		t.Fatal(err)
+	}
+	vol := dbToPercent(m.Gains[0] + m.HeadroomDB + m.Master)
+	if pw.left != vol || pw.right != 0 {
+		t.Fatalf("Left placement: stream at %d%%/%d%%, want %d%%/0%%", pw.left, pw.right, vol)
+	}
+
+	sets := rec.countContaining("set-sink-input")
+	a.applyMixer()
+	if rec.countContaining("set-sink-input") != sets {
+		t.Fatalf("a stream already at the mixer settings must not be set again: %v", rec.calls)
+	}
+
+	// The source paused and resumed: PipeWire put both channels back to one
+	// level. The next pass must restore the placement.
+	pw.mu.Lock()
+	pw.left, pw.right = 100, 100
+	pw.mu.Unlock()
+	a.applyMixer()
+	if pw.left != vol || pw.right != 0 {
+		t.Fatalf("after a PipeWire reset the stream is at %d%%/%d%%, want %d%%/0%%", pw.left, pw.right, vol)
+	}
+
+	m.Placement[0] = "right"
 	m.Mutes[0] = true
 	if err := a.updateMixer(m); err != nil {
 		t.Fatal(err)
 	}
-	if rec.countContaining("set-sink-input-mute "+streamID+" 1") != 1 {
-		t.Fatal("a changed mute must be sent")
+	if pw.left != 0 || pw.right != vol || !pw.mute {
+		t.Fatalf("Right placement and mute: %d%%/%d%% mute=%v", pw.left, pw.right, pw.mute)
 	}
+}
 
-	// A restarted pipewire-pulse hands out ids from the start again, so the same
-	// id can belong to a new stream at the default volume.
-	a.restartAudio()
-	a.applyMixer()
-	if n := rec.countContaining("set-sink-input-volume " + streamID); n != 3 {
-		t.Fatalf("after an audio restart the stream must be set again, got %d volume calls", n)
+func TestStreamHas(t *testing.T) {
+	block := "Sink Input #7\n\tMute: no\n\tVolume: front-left: 52429 /  80% / -5.81 dB,   front-right: 0 /   0% / -inf dB\n\t        balance -1.00\n"
+	if !streamHas(block, 80, 0, false) {
+		t.Fatal("80%/0% unmuted must match")
 	}
-
-	streamID = "57" // the source reconnected
-	a.applyMixer()
-	if rec.countContaining("set-sink-input-volume 57") != 1 {
-		t.Fatal("a new stream must get the saved mixer settings")
+	if streamHas(block, 80, 80, false) || streamHas(block, 80, 0, true) {
+		t.Fatal("a different volume or mute must not match")
+	}
+	if streamHas("Sink Input #7\n\tMute: no\n\tVolume: mono: 65536 / 100% / 0.00 dB\n", 100, 100, false) {
+		t.Fatal("a mono stream cannot show a placement")
+	}
+	if streamHas("", 100, 100, false) {
+		t.Fatal("an unreadable block must count as different")
 	}
 }
 

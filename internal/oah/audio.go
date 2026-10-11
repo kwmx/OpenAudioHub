@@ -81,9 +81,7 @@ func (a *App) applyAudioConfig(cfg AudioConfig) error {
 	// Never start an idle player merely because settings were saved. Receiver
 	// capabilities take effect only after the BlueALSA peer reconnects.
 	if graphChanged {
-		_, err := a.run.Run(28*time.Second, "systemctl", "restart", "openaudiohub-audio-tuning.service")
-		a.resetMixerCache()
-		if err != nil {
+		if _, err := a.run.Run(28*time.Second, "systemctl", "restart", "openaudiohub-audio-tuning.service"); err != nil {
 			return fmtErr("settings saved, but the audio graph could not be restarted; inspect Diagnostics")
 		}
 	}
@@ -616,27 +614,12 @@ func (a *App) setDefaultOutput(addr string) {
 	}
 }
 
-// resetMixerCache makes the next applyMixer send every stream its settings.
-// Sink-input ids are only unique within one pipewire-pulse run, so whatever
-// may have recreated the streams (a graph restart, a new stream) clears it.
-func (a *App) resetMixerCache() {
-	a.mixerApplyMu.Lock()
-	a.mixerApplied = nil
-	a.mixerApplyMu.Unlock()
-}
-
 func (a *App) applyMixer() {
 	a.mixerApplyMu.Lock()
 	defer a.mixerApplyMu.Unlock()
 	c := a.cfg.Get()
 	blocks := a.sinkInputBlocks()
 	bluealsaAddrs := a.bluealsaPCMAddresses()
-	// Remember what each stream was last given and send only changes. Reconcile
-	// applies the mixer on every pass, which used to cost two pactl processes per
-	// input every 45 s with nothing to change. A stream that reappears gets a new
-	// id, so it is always set again.
-	applied := map[string]string{}
-	defer func() { a.mixerApplied = applied }()
 	for i, addr := range c.Slots.Inputs {
 		if addr == "" || i >= len(c.Mixer.Gains) {
 			continue
@@ -654,28 +637,52 @@ func (a *App) applyMixer() {
 		if i < len(c.Mixer.Placement) {
 			placement = c.Mixer.Placement[i]
 		}
-		left, right := fmt.Sprintf("%d%%", vol), fmt.Sprintf("%d%%", vol)
+		left, right := vol, vol
 		switch placement {
 		case "left":
-			right = "0%"
+			right = 0
 		case "right":
-			left = "0%"
+			left = 0
 		}
-		mute := "0"
-		if c.Mixer.MasterMute || (i < len(c.Mixer.Mutes) && c.Mixer.Mutes[i]) {
-			mute = "1"
-		}
-		want := left + " " + right + " " + mute
-		if a.mixerApplied[id] == want {
-			applied[id] = want
+		mute := c.Mixer.MasterMute || (i < len(c.Mixer.Mutes) && c.Mixer.Mutes[i])
+		// Compare with what PipeWire reports now, not with what was last sent.
+		// PipeWire resets a Bluetooth input's channel volumes to one level
+		// whenever the source restarts its stream (play after pause, a new
+		// track, a reconnect), which silently undid Left/Right placement.
+		if streamHas(blocks[id], left, right, mute) {
 			continue
 		}
-		_, errVol := a.userPactl("set-sink-input-volume", id, left, right)
-		_, errMute := a.userPactl("set-sink-input-mute", id, mute)
-		if errVol == nil && errMute == nil {
-			applied[id] = want
+		_, _ = a.userPactl("set-sink-input-volume", id, fmt.Sprintf("%d%%", left), fmt.Sprintf("%d%%", right))
+		m := "0"
+		if mute {
+			m = "1"
+		}
+		_, _ = a.userPactl("set-sink-input-mute", id, m)
+	}
+}
+
+var volumePercentRE = regexp.MustCompile(`/\s*(\d+)%`)
+
+// streamHas reports whether a `pactl list sink-inputs` block already shows a
+// stereo stream at the given channel percentages and mute state. Anything it
+// cannot read counts as different, so the settings are sent.
+func streamHas(block string, left, right int, mute bool) bool {
+	var vols []int
+	muteKnown, muted := false, false
+	for _, l := range strings.Split(block, "\n") {
+		l = strings.TrimSpace(l)
+		switch {
+		case strings.HasPrefix(l, "Volume:") && vols == nil:
+			for _, m := range volumePercentRE.FindAllStringSubmatch(l, -1) {
+				n, _ := strconv.Atoi(m[1])
+				vols = append(vols, n)
+			}
+		case strings.HasPrefix(l, "Mute:"):
+			muteKnown = true
+			muted = strings.TrimSpace(strings.TrimPrefix(l, "Mute:")) == "yes"
 		}
 	}
+	return len(vols) == 2 && vols[0] == left && vols[1] == right && muteKnown && muted == mute
 }
 
 // dbToPercent converts a gain in dB to a pactl volume percentage. pactl
@@ -707,6 +714,8 @@ func (a *App) audioUserCommand(timeout time.Duration, name string, args ...strin
 		"XDG_RUNTIME_DIR=" + runtime,
 		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtime + "/bus",
 		"PULSE_SERVER=unix:" + runtime + "/pulse/native",
+		// The daemon parses pactl and wpctl output; keep its labels untranslated.
+		"LC_ALL=C",
 		name,
 	}
 	return a.run.Run(timeout, "runuser", append(base, args...)...)
@@ -814,7 +823,6 @@ func (a *App) ensureAudioSession() error {
 		return err
 	}
 	a.audioLastHeal = time.Now()
-	a.resetMixerCache()
 	c := a.cfg.Get()
 	_, _ = a.run.Run(5*time.Second, "systemctl", "start", fmt.Sprintf("user@%d.service", c.AudioUID))
 	_, _ = a.audioUserCommand(8*time.Second, "systemctl", "--user", "start",
@@ -860,22 +868,42 @@ func (a *App) mixerEventSupervisor() {
 			time.Sleep(2 * time.Second)
 			continue
 		}
-		// A (re)started subscription usually means pipewire-pulse restarted, and
-		// a restarted server hands out sink-input ids from the start again.
-		a.resetMixerCache()
 		sc := bufio.NewScanner(stdout)
 		for sc.Scan() {
-			if strings.Contains(sc.Text(), "Event 'new' on sink-input") {
-				// The new stream starts at the server's default volume, and its id
-				// may be one an old stream had.
-				a.resetMixerCache()
+			line := sc.Text()
+			switch {
+			case strings.Contains(line, "Event 'new' on sink-input"):
 				time.Sleep(80 * time.Millisecond)
 				a.applyMixer()
 				a.signalRefresh()
+			case strings.Contains(line, "Event 'change' on sink-input"):
+				// PipeWire resets a Bluetooth input's channel volumes when the
+				// source restarts its stream; put the mixer settings back at once
+				// rather than on the next 45 s reconcile. applyMixer only sends
+				// what differs, so its own changes do not loop.
+				a.kickMixer()
 			}
 		}
 		_ = cmd.Wait()
 		time.Sleep(2 * time.Second)
+	}
+}
+
+// kickMixer asks the mixer worker to re-apply the mixer soon. Bursts of
+// requests coalesce into one pass.
+func (a *App) kickMixer() {
+	a.mixerKickOnce.Do(func() {
+		a.mixerKick = make(chan struct{}, 1)
+		go func() {
+			for range a.mixerKick {
+				time.Sleep(150 * time.Millisecond)
+				a.applyMixer()
+			}
+		}()
+	})
+	select {
+	case a.mixerKick <- struct{}{}:
+	default:
 	}
 }
 
@@ -944,7 +972,6 @@ func (a *App) applyIdentity(hostname, btName string) error {
 
 func (a *App) restartAudio() {
 	_, _ = a.run.Run(10*time.Second, "systemctl", "restart", "openaudiohub-audio-tuning.service")
-	a.resetMixerCache()
 	a.requestReconcile("manual audio restart")
 }
 func (a *App) systemAction(action string) error {
