@@ -477,7 +477,21 @@ func (a *App) roleFor(addr string) string {
 	return ""
 }
 
+// listTransports reads the A2DP media transports from the BlueZ snapshot, which
+// the device list shares, and falls back to bluetoothctl when busctl fails. The
+// bluetoothctl path costs one process per transport plus one, every pass.
 func (a *App) listTransports() []Transport {
+	var ts []Transport
+	if objs, err := a.bluezObjectsSnapshot(); err == nil {
+		ts = objs.Transports
+	} else {
+		ts = a.listTransportsBluetoothctl()
+	}
+	a.noteTransports(ts)
+	return ts
+}
+
+func (a *App) listTransportsBluetoothctl() []Transport {
 	out, err := a.run.Run(3*time.Second, "bluetoothctl", "transport.list")
 	if err != nil {
 		return make([]Transport, 0)
@@ -824,8 +838,16 @@ func (a *App) setPairing(enable bool) error {
 	if enable {
 		val = "on"
 	}
-	if _, err := a.run.Run(4*time.Second, "bluetoothctl", "pairable", val); err != nil {
-		return err
+	// An outgoing pairing still running holds the controller bondable; switching
+	// pairable off under it would make that pairing store no key. The pairing's
+	// own cleanup switches it off when it finishes; see makeBondable.
+	a.mu.RLock()
+	held := a.bondHolds > 0
+	a.mu.RUnlock()
+	if enable || !held {
+		if _, err := a.run.Run(4*time.Second, "bluetoothctl", "pairable", val); err != nil {
+			return err
+		}
 	}
 	if _, err := a.run.Run(4*time.Second, "bluetoothctl", "discoverable", val); err != nil {
 		return err
@@ -894,6 +916,11 @@ func (a *App) forgetLocally(addr string) {
 func (a *App) pairingActive() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
+	return a.pairingActiveLocked()
+}
+
+// pairingActiveLocked is pairingActive for a caller that holds a.mu.
+func (a *App) pairingActiveLocked() bool {
 	return a.pairing.Active && time.Now().Before(a.pairing.Until)
 }
 

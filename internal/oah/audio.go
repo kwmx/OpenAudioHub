@@ -224,9 +224,18 @@ func (a *App) reconcileRoutes(reason string) {
 	now := time.Now()
 
 	c := a.cfg.Get()
-	connected := a.bluetoothDeviceSubset("Connected")
-	if connected == nil {
-		connected = map[string]bool{}
+	// One fresh GetManagedObjects reply serves both the connected set and the
+	// transport list below.
+	a.invalidateBluezSnapshot()
+	connected := map[string]bool{}
+	if objs, err := a.bluezObjectsSnapshot(); err == nil {
+		for addr, d := range objs.Devices {
+			if d.Connected {
+				connected[addr] = true
+			}
+		}
+	} else if set := a.bluetoothDeviceSubset("Connected"); set != nil {
+		connected = set
 	}
 	// BlueZ's generic Device1 Connected flag only means that an ACL link exists.
 	// A source can remain ACL-connected after its A2DP profile failed, which made
@@ -592,6 +601,14 @@ func (a *App) sinkNameFor(addr string) string {
 }
 
 func (a *App) setDefaultOutput(addr string) {
+	// Reconcile asks for this on every pass. The output is normally the default
+	// already, and one query is cheaper than listing every sink and setting it.
+	if cur, err := a.userPactl("get-default-sink"); err == nil {
+		needle := strings.ReplaceAll(strings.ToUpper(cleanAddr(addr)), ":", "_")
+		if needle != "" && strings.Contains(strings.ToUpper(cur), needle) {
+			return
+		}
+	}
 	if name := a.sinkNameFor(addr); name != "" {
 		_, _ = a.userPactl("set-default-sink", name)
 	}
@@ -620,20 +637,52 @@ func (a *App) applyMixer() {
 		if i < len(c.Mixer.Placement) {
 			placement = c.Mixer.Placement[i]
 		}
+		left, right := vol, vol
 		switch placement {
 		case "left":
-			_, _ = a.userPactl("set-sink-input-volume", id, fmt.Sprintf("%d%%", vol), "0%")
+			right = 0
 		case "right":
-			_, _ = a.userPactl("set-sink-input-volume", id, "0%", fmt.Sprintf("%d%%", vol))
-		default:
-			_, _ = a.userPactl("set-sink-input-volume", id, fmt.Sprintf("%d%%", vol), fmt.Sprintf("%d%%", vol))
+			left = 0
 		}
-		mute := "0"
-		if c.Mixer.MasterMute || (i < len(c.Mixer.Mutes) && c.Mixer.Mutes[i]) {
-			mute = "1"
+		mute := c.Mixer.MasterMute || (i < len(c.Mixer.Mutes) && c.Mixer.Mutes[i])
+		// Compare with what PipeWire reports now, not with what was last sent.
+		// PipeWire resets a Bluetooth input's channel volumes to one level
+		// whenever the source restarts its stream (play after pause, a new
+		// track, a reconnect), which silently undid Left/Right placement.
+		if streamHas(blocks[id], left, right, mute) {
+			continue
 		}
-		_, _ = a.userPactl("set-sink-input-mute", id, mute)
+		_, _ = a.userPactl("set-sink-input-volume", id, fmt.Sprintf("%d%%", left), fmt.Sprintf("%d%%", right))
+		m := "0"
+		if mute {
+			m = "1"
+		}
+		_, _ = a.userPactl("set-sink-input-mute", id, m)
 	}
+}
+
+var volumePercentRE = regexp.MustCompile(`/\s*(\d+)%`)
+
+// streamHas reports whether a `pactl list sink-inputs` block already shows a
+// stereo stream at the given channel percentages and mute state. Anything it
+// cannot read counts as different, so the settings are sent.
+func streamHas(block string, left, right int, mute bool) bool {
+	var vols []int
+	muteKnown, muted := false, false
+	for _, l := range strings.Split(block, "\n") {
+		l = strings.TrimSpace(l)
+		switch {
+		case strings.HasPrefix(l, "Volume:") && vols == nil:
+			for _, m := range volumePercentRE.FindAllStringSubmatch(l, -1) {
+				n, _ := strconv.Atoi(m[1])
+				vols = append(vols, n)
+			}
+		case strings.HasPrefix(l, "Mute:"):
+			muteKnown = true
+			muted = strings.TrimSpace(strings.TrimPrefix(l, "Mute:")) == "yes"
+		}
+	}
+	return len(vols) == 2 && vols[0] == left && vols[1] == right && muteKnown && muted == mute
 }
 
 // dbToPercent converts a gain in dB to a pactl volume percentage. pactl
@@ -665,6 +714,8 @@ func (a *App) audioUserCommand(timeout time.Duration, name string, args ...strin
 		"XDG_RUNTIME_DIR=" + runtime,
 		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtime + "/bus",
 		"PULSE_SERVER=unix:" + runtime + "/pulse/native",
+		// The daemon parses pactl and wpctl output; keep its labels untranslated.
+		"LC_ALL=C",
 		name,
 	}
 	return a.run.Run(timeout, "runuser", append(base, args...)...)
@@ -673,10 +724,13 @@ func (a *App) audioUserCommand(timeout time.Duration, name string, args ...strin
 func (a *App) userPactl(args ...string) (string, error) {
 	return a.audioUserCommand(5*time.Second, "pactl", args...)
 }
+
+var sinkInputRE = regexp.MustCompile(`Sink Input #(\d+)`)
+
 func (a *App) sinkInputBlocks() map[string]string {
 	out, _ := a.userPactl("list", "sink-inputs")
 	res := map[string]string{}
-	re := regexp.MustCompile(`Sink Input #(\d+)`)
+	re := sinkInputRE
 	var id string
 	var b strings.Builder
 	flush := func() {
@@ -816,14 +870,40 @@ func (a *App) mixerEventSupervisor() {
 		}
 		sc := bufio.NewScanner(stdout)
 		for sc.Scan() {
-			if strings.Contains(sc.Text(), "Event 'new' on sink-input") {
+			line := sc.Text()
+			switch {
+			case strings.Contains(line, "Event 'new' on sink-input"):
 				time.Sleep(80 * time.Millisecond)
 				a.applyMixer()
 				a.signalRefresh()
+			case strings.Contains(line, "Event 'change' on sink-input"):
+				// PipeWire resets a Bluetooth input's channel volumes when the
+				// source restarts its stream; put the mixer settings back at once
+				// rather than on the next 45 s reconcile. applyMixer only sends
+				// what differs, so its own changes do not loop.
+				a.kickMixer()
 			}
 		}
 		_ = cmd.Wait()
 		time.Sleep(2 * time.Second)
+	}
+}
+
+// kickMixer asks the mixer worker to re-apply the mixer soon. Bursts of
+// requests coalesce into one pass.
+func (a *App) kickMixer() {
+	a.mixerKickOnce.Do(func() {
+		a.mixerKick = make(chan struct{}, 1)
+		go func() {
+			for range a.mixerKick {
+				time.Sleep(150 * time.Millisecond)
+				a.applyMixer()
+			}
+		}()
+	})
+	select {
+	case a.mixerKick <- struct{}{}:
+	default:
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -34,21 +35,37 @@ var pairKeyWait = 400 * time.Millisecond
 // BlueZ exposes no Adapter1 property for the bondable flag, so Adapter1.Pairable
 // is the only lever that sets it. Unlike the source pairing window this does not
 // make the hub discoverable, only pairable.
+//
+// Every outgoing pairing holds the flag, pairing mode or not: the pairing window
+// can close while a pairing started inside it is still running (a pairing may take
+// up to a minute), and switching pairable off at that moment downgraded it to a
+// non-bonding pairing just the same. setPairing leaves pairable on while any hold
+// is outstanding, and the last hold to finish switches it off unless pairing mode
+// is on again by then.
 func (a *App) makeBondable() (func(), error) {
-	if a.pairingActive() {
-		// The source pairing window already has the adapter pairable.
-		return func() {}, nil
-	}
-	if _, err := a.run.Run(4*time.Second, "bluetoothctl", "pairable", "on"); err != nil {
-		return nil, err
-	}
-	return func() {
-		// Pairing mode may have been switched on while this pairing ran; it owns
-		// the adapter's pairable state now and turns it off itself.
-		if a.pairingActive() {
-			return
+	a.mu.Lock()
+	a.bondHolds++
+	needOn := a.bondHolds == 1 && !a.pairingActiveLocked()
+	a.mu.Unlock()
+	if needOn {
+		if _, err := a.run.Run(4*time.Second, "bluetoothctl", "pairable", "on"); err != nil {
+			a.mu.Lock()
+			a.bondHolds--
+			a.mu.Unlock()
+			return nil, err
 		}
-		_, _ = a.run.Run(4*time.Second, "bluetoothctl", "pairable", "off")
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			a.mu.Lock()
+			a.bondHolds--
+			off := a.bondHolds == 0 && !a.pairingActiveLocked()
+			a.mu.Unlock()
+			if off {
+				_, _ = a.run.Run(4*time.Second, "bluetoothctl", "pairable", "off")
+			}
+		})
 	}, nil
 }
 
@@ -90,7 +107,7 @@ func bluezBondHasKeyIn(root, addr string) bool {
 	if addr == "" {
 		return false
 	}
-	paths, _ := filepath.Glob(filepath.Join(root, "*", addr, "info"))
+	paths, _ := filepath.Glob(filepath.Join(root, adapterStoreGlob(), addr, "info"))
 	for _, p := range paths {
 		f, err := os.Open(p)
 		if err != nil {
@@ -123,7 +140,7 @@ func bluezDeviceStored(addr string) bool {
 	if addr == "" {
 		return false
 	}
-	paths, _ := filepath.Glob(filepath.Join(bluezStorageRoot, "*", addr, "info"))
+	paths, _ := filepath.Glob(filepath.Join(bluezStorageRoot, adapterStoreGlob(), addr, "info"))
 	return len(paths) > 0
 }
 

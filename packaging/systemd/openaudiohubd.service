@@ -22,6 +22,11 @@ ReadWritePaths=/etc/openaudiohub /etc/netplan /etc/bluetooth /etc/hostname /var/
 ProtectHome=read-only
 # The control plane must never be able to exhaust a 1 GB appliance if BlueZ
 # returns pathological discovery state or a client hammers the API.
+# The control plane and the BlueZ/PipeWire tools it runs yield the CPU to the
+# audio path, so a state refresh or a reconcile can never starve a decoder.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
 MemoryHigh=96M
 MemoryMax=160M
 TasksMax=64

@@ -28,6 +28,26 @@ type fakeHub struct {
 	calls     []string
 	// stubborn units stay failed whatever the doctor does.
 	stubborn map[string]bool
+	// noRealtime: PipeWire runs without realtime priority until RTKit is
+	// started and the audio graph restarted. procRoot is the fake /proc.
+	noRealtime bool
+	procRoot   string
+}
+
+// writePipeWireStat writes the fake /proc entry for PipeWire's audio thread.
+func (f *fakeHub) writePipeWireStat() {
+	fields := make([]string, 50) // fields 3..52
+	for i := range fields {
+		fields[i] = "0"
+	}
+	fields[0] = "S"
+	fields[41-3] = "1" // SCHED_FIFO
+	if f.noRealtime {
+		fields[41-3] = "0"
+	}
+	dir := filepath.Join(f.procRoot, "1234", "task", "1240")
+	_ = os.MkdirAll(dir, 0755)
+	_ = os.WriteFile(filepath.Join(dir, "stat"), []byte("1240 (data-loop.0) "+strings.Join(fields, " ")+"\n"), 0644)
 }
 
 func (f *fakeHub) run(name string, args ...string) (string, error) {
@@ -57,6 +77,9 @@ func (f *fakeHub) run(name string, args ...string) (string, error) {
 				return "", nil
 			}
 			f.units[args[1]] = "active"
+			if args[1] == "openaudiohub-audio-tuning.service" && f.units["rtkit-daemon.service"] == "active" {
+				f.noRealtime = false
+			}
 			return "", nil
 		case "disable":
 			for _, u := range args[2:] {
@@ -96,6 +119,9 @@ func (f *fakeHub) run(name string, args ...string) (string, error) {
 		return out, nil
 	case "runuser":
 		return f.userUnits, nil
+	case "pgrep":
+		f.writePipeWireStat()
+		return "1234\n", nil
 	case "/usr/sbin/iw":
 		return "Connected to 66:55:44:33:22:11 (on wlan0)\n\tSSID: Home-5G\n\tfreq: 5180\n\tsignal: -50 dBm\n", nil
 	}
@@ -138,10 +164,12 @@ func healthyFake(t *testing.T) *fakeHub {
 func doctorApp(t *testing.T, fake *fakeHub) *App {
 	t.Helper()
 	dir := t.TempDir()
-	oldConf, oldBin, oldRfkill, oldFlag, oldDisk := bluetoothMainConf, bluealsaReceiverBin, rfkillRoot, pairingFlagPath, diskCheckPath
+	oldConf, oldBin, oldRfkill, oldFlag, oldDisk, oldProc := bluetoothMainConf, bluealsaReceiverBin, rfkillRoot, pairingFlagPath, diskCheckPath, procRoot
 	t.Cleanup(func() {
-		bluetoothMainConf, bluealsaReceiverBin, rfkillRoot, pairingFlagPath, diskCheckPath = oldConf, oldBin, oldRfkill, oldFlag, oldDisk
+		bluetoothMainConf, bluealsaReceiverBin, rfkillRoot, pairingFlagPath, diskCheckPath, procRoot = oldConf, oldBin, oldRfkill, oldFlag, oldDisk, oldProc
 	})
+	procRoot = filepath.Join(dir, "proc")
+	fake.procRoot = procRoot
 	bluetoothMainConf = filepath.Join(dir, "main.conf")
 	bluealsaReceiverBin = filepath.Join(dir, "bluealsa-receiver")
 	rfkillRoot = filepath.Join(dir, "rfkill")
@@ -458,5 +486,42 @@ func TestDoctorFixesStaleActiveBluezSettings(t *testing.T) {
 	b, _ := os.ReadFile(bluetoothMainConf)
 	if strings.Count(string(b), "Name =") != 1 || strings.Count(string(b), "Class =") != 1 {
 		t.Fatalf("duplicate keys written:\n%s", b)
+	}
+}
+
+// Without realtime priority PipeWire's audio thread competes with everything
+// else on the board. The doctor must notice and restart audio once RTKit runs.
+func TestDoctorRestoresRealtimeAudio(t *testing.T) {
+	fake := healthyFake(t)
+	fake.noRealtime = true
+	a := doctorApp(t, fake)
+	c := checkByID(t, a.runDoctor(nil), "audio-realtime")
+	if c.Status != doctorWarning || !strings.Contains(c.Detail, "RTKit") {
+		t.Fatalf("before: %+v", c)
+	}
+	c = checkByID(t, a.runDoctor(map[string]bool{"audio-realtime": true}), "audio-realtime")
+	if !c.Fixed || c.Status != doctorOK {
+		t.Fatalf("after: %+v", c)
+	}
+	if !fake.called("systemctl start rtkit-daemon.service") {
+		t.Fatal("the fix must start RTKit before restarting audio")
+	}
+}
+
+func TestHasRealtimeThreadHandlesOddCommandNames(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "7", "task", "8")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Repeat("0 ", 37) + "2 0 0" // fields 4..40, then 41
+	if err := os.WriteFile(filepath.Join(dir, "stat"), []byte("8 (pw (data) loop) S "+fields+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !hasRealtimeThread(root, "7") {
+		t.Fatal("SCHED_RR in field 41 is realtime")
+	}
+	if hasRealtimeThread(root, "9") {
+		t.Fatal("a missing process has no realtime thread")
 	}
 }

@@ -2,6 +2,7 @@ package oah
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -273,20 +274,48 @@ func (p *busctlParser) value(sig string) (any, error) {
 	return nil, fmt.Errorf("busctl: unsupported type %q", t)
 }
 
+// bluezObjects is what one GetManagedObjects reply tells the hub: every device,
+// every A2DP media transport and the address of the adapter in use.
+type bluezObjects struct {
+	Devices    map[string]bluezDevice
+	Transports []Transport
+	// Adapter is the address of hci0 (or of the only adapter), "" when unknown.
+	Adapter string
+}
+
 // parseManagedObjects decodes busctl's text rendering of an ObjectManager
 // GetManagedObjects reply (a{oa{sa{sv}}}) into the BlueZ devices it lists.
 func parseManagedObjects(out string) (map[string]bluezDevice, error) {
-	sig, v, err := parseBusctlText(strings.TrimSpace(out))
+	objs, err := parseBluezObjects(out)
 	if err != nil {
 		return nil, err
 	}
+	return objs.Devices, nil
+}
+
+func parseBluezObjects(out string) (bluezObjects, error) {
+	res := bluezObjects{Devices: map[string]bluezDevice{}, Transports: []Transport{}}
+	sig, v, err := parseBusctlText(strings.TrimSpace(out))
+	if err != nil {
+		return res, err
+	}
 	if sig != "a{oa{sa{sv}}}" {
-		return nil, fmt.Errorf("unexpected GetManagedObjects reply type %q", sig)
+		return res, fmt.Errorf("unexpected GetManagedObjects reply type %q", sig)
 	}
 	objects, _ := v.(map[string]any)
-	res := map[string]bluezDevice{}
-	for _, ifv := range objects {
+	adapters := map[string]string{}
+	for path, ifv := range objects {
 		ifaces, _ := ifv.(map[string]any)
+		if props, ok := ifaces["org.bluez.Adapter1"].(map[string]any); ok {
+			if s, _ := props["Address"].(string); cleanAddr(s) != "" {
+				adapters[path] = cleanAddr(s)
+			}
+		}
+		if props, ok := ifaces["org.bluez.MediaTransport1"].(map[string]any); ok {
+			if t, ok := transportFromProps(path, props); ok {
+				res.Transports = append(res.Transports, t)
+			}
+		}
 		props, ok := ifaces["org.bluez.Device1"].(map[string]any)
 		if !ok {
 			continue
@@ -320,7 +349,102 @@ func parseManagedObjects(out string) (map[string]bluezDevice, error) {
 		_, d.HasBonded = props["Bonded"]
 		d.Trusted = boolean("Trusted")
 		d.Connected = boolean("Connected")
-		res[d.Addr] = d
+		res.Devices[d.Addr] = d
 	}
+	if addr, ok := adapters["/org/bluez/hci0"]; ok {
+		res.Adapter = addr
+	} else if len(adapters) == 1 {
+		for _, addr := range adapters {
+			res.Adapter = addr
+		}
+	}
+	// Map iteration order is random; keep the transport list stable for the UI
+	// and for the state change detection that compares successive builds.
+	sort.Slice(res.Transports, func(i, j int) bool { return res.Transports[i].Path < res.Transports[j].Path })
 	return res, nil
+}
+
+// transportFromProps describes a MediaTransport1 object the way the
+// bluetoothctl transport.show parser does, so both sources are interchangeable.
+func transportFromProps(path string, props map[string]any) (Transport, bool) {
+	t := Transport{Path: path, Addr: addrFromBluezPath(path)}
+	if dev, _ := props["Device"].(string); t.Addr == "" && dev != "" {
+		t.Addr = addrFromBluezPath(dev)
+	}
+	uuid, _ := props["UUID"].(string)
+	switch strings.ToLower(uuid) {
+	case uuidA2DPSink:
+		t.UUID = "Audio Sink (" + uuid + ")"
+	case uuidA2DPSource:
+		t.UUID = "Audio Source (" + uuid + ")"
+	default:
+		// LE Audio and other transports are not part of the A2DP routing.
+		return t, false
+	}
+	t.State, _ = props["State"].(string)
+	if v, ok := props["Volume"].(uint64); ok {
+		t.Volume, t.VolumeKnown = int(v), true
+	}
+	if v, ok := props["Delay"].(uint64); ok {
+		t.Delay, t.DelayKnown = int(v), true
+	}
+	codec, _ := props["Codec"].(uint64)
+	var conf []byte
+	if list, ok := props["Configuration"].([]any); ok {
+		for _, b := range list {
+			if n, ok := b.(uint64); ok {
+				conf = append(conf, byte(n))
+			}
+		}
+	}
+	t.Codec, t.Rate, t.SBCMaxBitpool = describeA2DPConfig(byte(codec), conf)
+	return t, true
+}
+
+// describeA2DPConfig names an A2DP codec and reads the negotiated sample rate
+// (and the SBC bitpool ceiling) from its configuration blob, per the A2DP
+// specification's codec information elements.
+func describeA2DPConfig(codec byte, conf []byte) (name string, rate, maxBitpool int) {
+	pick := func(b byte, table map[byte]int) int {
+		for bit, r := range table {
+			if b&bit != 0 {
+				return r
+			}
+		}
+		return 0
+	}
+	switch codec {
+	case 0x00:
+		name = "SBC"
+		if len(conf) >= 4 {
+			rate = pick(conf[0]&0xf0, map[byte]int{0x80: 16000, 0x40: 32000, 0x20: 44100, 0x10: 48000})
+			maxBitpool = int(conf[3])
+		}
+	case 0x01:
+		name = "MP3"
+	case 0x02:
+		name = "AAC"
+		if len(conf) >= 3 {
+			if rate = pick(conf[2]&0xf0, map[byte]int{0x80: 48000, 0x40: 64000, 0x20: 88200, 0x10: 96000}); rate == 0 {
+				rate = pick(conf[1], map[byte]int{0x01: 44100, 0x02: 32000, 0x04: 24000, 0x08: 22050, 0x10: 16000, 0x20: 12000, 0x40: 11025, 0x80: 8000})
+			}
+		}
+	case 0xff:
+		name = "Vendor codec"
+		if len(conf) >= 6 {
+			vendor := uint32(conf[0]) | uint32(conf[1])<<8 | uint32(conf[2])<<16 | uint32(conf[3])<<24
+			id := uint16(conf[4]) | uint16(conf[5])<<8
+			switch {
+			case vendor == 0x4f && id == 0x01:
+				name = "aptX"
+			case vendor == 0xd7 && id == 0x24:
+				name = "aptX HD"
+			case vendor == 0x12d && id == 0xaa:
+				name = "LDAC"
+			}
+		}
+	default:
+		name = fmt.Sprintf("0x%02x", codec)
+	}
+	return name, rate, maxBitpool
 }

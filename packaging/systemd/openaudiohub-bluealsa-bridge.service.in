@@ -17,6 +17,9 @@ ExecStart=/usr/local/lib/openaudiohub/bluealsa-bridge.sh
 Restart=on-failure
 RestartPreventExitStatus=73 78
 RestartSec=5
+# Same niceness PipeWire gives its own main loop: this process plays Input 2's
+# audio in real time and must win the CPU over the control plane and tools.
+Nice=-11
 MemoryHigh=64M
 MemoryMax=128M
 TasksMax=32
